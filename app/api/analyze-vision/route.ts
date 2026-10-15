@@ -16,11 +16,12 @@ export async function POST(request: Request) {
 
     const arrayBuffer = await file.arrayBuffer();
     const base64Image = Buffer.from(arrayBuffer).toString('base64');
+    const mimeType = file.type || 'image/jpeg';
 
     const imagePart = {
       inlineData: {
         data: base64Image,
-        mimeType: file.type,
+        mimeType: mimeType,
       },
     };
 
@@ -38,9 +39,57 @@ export async function POST(request: Request) {
       Evalúa el nivel de desinfección visualmente: usa CLINICAL si es un entorno médico, POST_CONSTRUCTION si hay escombros, o ajusta a los demás según el nivel de higiene y uso que percibas en la foto. Responde solo el JSON.
     `;
 
-    const result = await model.generateContent([prompt, imagePart]);
-    const cleanJsonString = result.response.text().replace(/```json/g, '').replace(/```/g, '').trim();
-    const detectedData = JSON.parse(cleanJsonString);
+    let detectedData;
+
+    // ==========================================
+    // INTENTO 1: GOOGLE GEMINI
+    // ==========================================
+    try {
+      const result = await model.generateContent([prompt, imagePart]);
+      const cleanJsonString = result.response.text().replace(/```json/g, '').replace(/```/g, '').trim();
+      detectedData = JSON.parse(cleanJsonString);
+    } catch (geminiError) {
+      console.warn('⚠️ Gemini falló. Activando Fallback a OpenAI (ChatGPT)...');
+      console.error('🔍 Detalle del error de Gemini:', geminiError);
+      
+      // ==========================================
+      // INTENTO 2: FALLBACK A OPENAI
+      // ==========================================
+const groqRes = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${process.env.GROQ_API_KEY}`
+        },
+        body: JSON.stringify({
+          model: "qwen/qwen3.8-27b", 
+          response_format: { type: "json_object" },
+          messages: [
+            {
+              role: "user",
+              content: [
+                { type: "text", text: prompt },
+                {
+                  type: "image_url",
+                  image_url: {
+                    url: `data:${mimeType};base64,${base64Image}`
+                  }
+                }
+              ]
+            }
+          ]
+        })
+      });
+
+      if (!groqRes.ok) {
+        const groqErrorDetails = await groqRes.text();
+        console.error('🔍 Detalle del error de Groq:', groqErrorDetails);
+        throw new Error('Ambas APIs de Inteligencia Artificial fallaron.');
+      }
+
+      const groqData = await groqRes.json();
+      detectedData = JSON.parse(groqData.choices[0].message.content);
+    }
 
     // Si nos enviaron el área, calculamos la cotización de inmediato
     if (areaM2) {
@@ -50,7 +99,7 @@ export async function POST(request: Request) {
         floorMaterial: detectedData.floorMaterial || 'TILE',
         riskLevel: detectedData.riskLevel || 'LOW',
         trafficLevel: detectedData.trafficLevel || 'MEDIUM',
-        disinfectionLevel: 'CONTINUOUS_BASIC',
+        disinfectionLevel: detectedData.disinfectionLevel || 'CONTINUOUS_BASIC',
         frequencyType: 'SPOT', // Asumimos servicio único para la prueba
         bathroomsCount: Math.floor(Number(areaM2) / 100) || 1, // 1 baño automático
         windowsM2: 0,

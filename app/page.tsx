@@ -4,7 +4,7 @@ import React, { useState, useEffect, useRef } from "react";
 import { Building2, Sparkles, Calculator, Save, UploadCloud, Loader2, Settings2, ChevronDown, ChevronUp, Image as ImageIcon, Mic, MicOff } from "lucide-react";
 
 // ============================================================================
-// 1. MOTOR DE PARSEO DE VOZ (Extraído del archivo proporcionado)
+// 1. MOTOR DE PARSEO DE VOZ 
 // ============================================================================
 const NUMBER_WORDS = new Map<string, number>([
   ["cero", 0], ["un", 1], ["uno", 1], ["una", 1], ["dos", 2], ["tres", 3], ["cuatro", 4],
@@ -83,12 +83,13 @@ function parseTranscript(transcript: string): Record<string, string> {
   const patch: Record<string, string> = {};
   const toNum = (s: string) => Number(s.replace(",", "."));
   const NUM = "([0-9]+(?:[.,][0-9]+)?)";
-  const M2 = "(?:metros cuadrados|metro cuadrado|metros|metro|m2)";
-
+  
   let rest = t;
+
+  // Buscamos ventanas y baños primero
   const windowPatterns = [
-    new RegExp(`ventanas?\\s*(?:de|con|por|son)?\\s*${NUM}\\s*${M2}`),
-    new RegExp(`${NUM}\\s*${M2}\\s*(?:de\\s+)?ventanas?`),
+    new RegExp(`ventanas?\\s*(?:de|con|por|son)?\\s*${NUM}`),
+    new RegExp(`${NUM}\\s*(?:metros cuadrados|metros|m2)?\\s*(?:de\\s+)?ventanas?`),
   ];
   for (const re of windowPatterns) {
     const m = rest.match(re);
@@ -99,12 +100,25 @@ function parseTranscript(transcript: string): Record<string, string> {
     }
   }
 
-  const area = rest.match(new RegExp(`${NUM}\\s*${M2}`));
-  if (area) patch.areaM2 = String(toNum(area[1]));
+  const baths = rest.match(new RegExp(`${NUM}\\s*(?:banos?|servicios higienicos|sshh)`));
+  if (baths) {
+    patch.bathroomsCount = String(Math.round(toNum(baths[1])));
+    rest = rest.replace(baths[0], " ");
+  }
 
-  const baths = t.match(new RegExp(`${NUM}\\s*(?:banos?|servicios higienicos|sshh)`));
-  if (baths) patch.bathroomsCount = String(Math.round(toNum(baths[1])));
+  // EXTRACCIÓN DE ÁREA BLINDADA Y FLEXIBLE
+  const strictArea = rest.match(new RegExp(`${NUM}\\s*(?:metros cuadrados|metro cuadrado|metros|metro|m2)`));
+  if (strictArea) {
+    patch.areaM2 = String(toNum(strictArea[1]));
+  } else {
+    // Si el usuario solo dice o escribe un número suelto (ej: "250")
+    const looseNum = rest.match(new RegExp(`\\b${NUM}\\b`));
+    if (looseNum) {
+      patch.areaM2 = String(toNum(looseNum[1]));
+    }
+  }
 
+  // Mantenemos la detección de otros campos opcionales por si los menciona
   if (/puntual|una sola vez|una vez/.test(t)) patch.frequencyType = "SPOT";
   else if (/todos los dias|diari[oa]|cada dia|lunes a viernes/.test(t)) patch.frequencyType = "MONTHLY_DAILY";
   else if (/semanal|por semana|cada semana/.test(t)) patch.frequencyType = "WEEKLY";
@@ -237,10 +251,10 @@ export default function CleanQuoteApp() {
     }
   }
 
-  // Función: Aplicar texto al formulario actual
+  // Función: Aplicar texto al formulario actual (Optimizado para modo híbrido y total)
   function applyTranscript() {
     if (!transcript.trim()) {
-      setApplyMsg({ ok: false, text: "Primero dicta o escribe una descripción." });
+      setApplyMsg({ ok: false, text: "Primero dicta o escribe un valor (ej. '250')." });
       return;
     }
 
@@ -248,23 +262,32 @@ export default function CleanQuoteApp() {
     const keys = Object.keys(patch);
 
     if (keys.length === 0) {
-      setApplyMsg({ ok: false, text: "No detecté medidas ni áreas. Prueba decir: 'Oficina de 250 metros cuadrados y 3 baños'." });
+      setApplyMsg({ ok: false, text: "No detecté ningún número. Escribe o dicta el área en m²." });
       return;
     }
 
-    // Inyectamos los datos detectados en los estados de tu UI
+    // Inyectamos SÓLO lo que se detectó. Si la IA ya llenó el formulario, esto NO lo borra.
     if (patch.areaM2) setAreaM2(Number(patch.areaM2));
     if (patch.bathroomsCount) setBathroomsCount(Number(patch.bathroomsCount));
     if (patch.windowsM2) setWindowsM2(Number(patch.windowsM2));
 
     setForm(prev => ({
       ...prev,
+      // Si el dictado incluye el tipo de instalación lo actualiza, si no, deja el de la IA
       facilityType: patch.facilityType || prev.facilityType,
       floorMaterial: patch.floorMaterial || prev.floorMaterial,
       frequencyType: patch.frequencyType || prev.frequencyType,
     }));
 
-    setApplyMsg({ ok: true, text: `¡Listo! Se extrajeron ${keys.length} variables del texto y se llenó el formulario.` });
+    // Mensaje de éxito dinámico
+    let msg = "¡Listo! ";
+    if (patch.areaM2 && keys.length === 1) {
+      msg += `Área registrada: ${patch.areaM2} m². Conservando datos de la IA.`;
+    } else {
+      msg += `Se extrajeron ${keys.length} variables del texto y se llenó el formulario.`;
+    }
+
+    setApplyMsg({ ok: true, text: msg });
   }
 
   // IA Visual (Mantenida intacta)

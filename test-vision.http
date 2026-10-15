@@ -1,13 +1,2 @@
-POST http://localhost:3000/api/analyze-vision
-Content-Type: multipart/form-data; boundary=----BoundaryMio
-
-------BoundaryMio
-Content-Disposition: form-data; name="image"; filename="image_ba786a.jpg"
-Content-Type: image/jpeg
-
-< ./image_ba786a.jpg
-------BoundaryMio
-Content-Disposition: form-data; name="areaM2"
-
-120
-------BoundaryMio--
+GET https://api.groq.com/openai/v1/models
+Authorization: Bearer 
