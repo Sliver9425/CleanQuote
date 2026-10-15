@@ -1,0 +1,82 @@
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+// 1. Parámetros globales y factores editables por el Administrador
+model PricingParameter {
+  id          String   @id @default(cuid())
+  key         String   @unique // ej: "C_BASE_HOUR", "R_BASE_M2", "OVERHEAD_PCT"
+  name        String
+  category    String   // "BASE", "COMPLEXITY", "FLOOR", "RISK", "FREQUENCY", "SUPPLIES", "EQUIPMENT"
+  value       Float
+  unit        String   // "USD/h", "m2/h", "multiplier", "pct"
+  explanation String   // Texto que se muestra en la UI para explicar este factor
+  updatedAt   DateTime @updatedAt
+}
+
+// 2. Cabecera de la Cotización
+model Quote {
+  id                 String          @id @default(cuid())
+  clientName         String
+  clientEmail        String?
+  status             String          @default("DRAFT")
+  discountPct        Float           @default(0)
+  discountAmount     Float           @default(0)
+  facilityName       String
+  facilityType       String          // OFFICE, HEALTH, INDUSTRIAL, RESIDENTIAL
+  floorMaterial      String          // TILE, VINYL, CARPET, MARBLE
+  areaM2             Float
+  bathroomsCount     Int             @default(0)
+  windowsM2          Float           @default(0)
+  riskLevel          String          // LOW, MEDIUM, HIGH
+  trafficLevel       String          // LOW, MEDIUM, HIGH
+  disinfectionLevel  String          // BASIC, STANDARD_SPOT, CLINICAL
+  frequencyType      String          // SPOT, WEEKLY, MONTHLY_DAILY
+  eventsPerMonth     Float
+  
+  // Resultados calculados
+  effectiveRateM2H   Float           // Productividad ajustada (m2/h)
+  hoursPerEvent      Float
+  totalHoursMonth    Float
+  directCost         Float
+  overheadCost       Float
+  totalCost          Float
+  marginPct          Float
+  subtotalPrice      Float
+  ivaAmount          Float
+  finalPrice         Float
+  pricePerM2         Float
+
+  // Snapshot de los parámetros usados en ese momento (JSONB en Postgres)
+  parameterSnapshot  Json
+  
+  lineItems          QuoteLineItem[]
+  createdAt          DateTime        @default(now())
+}
+
+// 3. Líneas de desglose explicables para la interfaz
+model QuoteLineItem {
+  id          String  @id @default(cuid())
+  quoteId     String
+  quote       Quote   @relation(fields: [quoteId], references: [id], onDelete: Cascade)
+  category    String  // "LABOR", "SUPPLIES", "EQUIPMENT", "OVERHEAD", "MARGIN", "DISCOUNT_SURCHARGE"
+  concept     String
+  formulaUsed String
+  explanation String
+  amountUsd   Float
+}
+
+// Códigos de descuento creados y autorizados por un administrador.
+model AuthorizedDiscount {
+  id          String   @id @default(cuid())
+  code        String   @unique
+  maxPct      Float
+  active      Boolean  @default(true)
+  expiresAt   DateTime?
+  createdAt   DateTime @default(now())
+}
