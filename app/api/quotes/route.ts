@@ -18,7 +18,7 @@ export async function POST(request: Request) {
       disinfectionLevel: body.disinfectionLevel || 'CONTINUOUS_BASIC',
       
       bathroomsCount: Number(body.bathroomsCount) || Math.floor(Number(body.areaM2) / 100) || 0,
-      windowsM2: Number(body.windowsM2) || 0,
+      windowsM2: body.windowsM2 !== undefined ? Number(body.windowsM2) : Math.floor(Number(body.areaM2) * 0.05) || 0,
       isNightShift: body.isNightShift || false,
     };
 
