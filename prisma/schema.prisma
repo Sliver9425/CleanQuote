@@ -7,60 +7,135 @@ generator client {
   provider = "prisma-client-js"
 }
 
-// 1. Parámetros globales y factores editables por el Administrador
+// ============================================================
+// 1. Parámetros globales editables por el Administrador
+// ============================================================
 model PricingParameter {
   id          String   @id @default(cuid())
   key         String   @unique // ej: "C_BASE_HOUR", "R_BASE_M2", "OVERHEAD_PCT"
   name        String
-  category    String   // "BASE", "COMPLEXITY", "FLOOR", "RISK", "FREQUENCY", "SUPPLIES", "EQUIPMENT"
+  category    String   // "BASE", "COMPLEXITY", "FLOOR", "RISK", "FREQUENCY",
+                       // "SUPPLIES", "EQUIPMENT", "EXTERIOR", "DEBRIS", "MOBILIZATION"
   value       Float
-  unit        String   // "USD/h", "m2/h", "multiplier", "pct"
+  unit        String   // "USD/h", "m2/h", "multiplier", "pct", "USD/m3", "USD/trip"
   explanation String   // Texto que se muestra en la UI para explicar este factor
   updatedAt   DateTime @updatedAt
 }
 
-// 2. Cabecera de la Cotización
+// ============================================================
+// 2. Cabecera de Cotización (común para INTERIOR y EXTERIOR)
+// ============================================================
 model Quote {
-  id                 String          @id @default(cuid())
-  clientName         String
-  facilityName       String
-  facilityType       String          // OFFICE, HEALTH, INDUSTRIAL, RESIDENTIAL
-  floorMaterial      String          // TILE, VINYL, CARPET, MARBLE
-  areaM2             Float
-  bathroomsCount     Int             @default(0)
-  windowsM2          Float           @default(0)
-  riskLevel          String          // LOW, MEDIUM, HIGH
-  trafficLevel       String          // LOW, MEDIUM, HIGH
-  disinfectionLevel  String          // BASIC, STANDARD_SPOT, CLINICAL
-  frequencyType      String          // SPOT, WEEKLY, MONTHLY_DAILY
-  eventsPerMonth     Float
-  
-  // Resultados calculados
-  effectiveRateM2H   Float           // Productividad ajustada (m2/h)
-  hoursPerEvent      Float
-  totalHoursMonth    Float
-  directCost         Float
-  overheadCost       Float
-  totalCost          Float
-  marginPct          Float
-  subtotalPrice      Float
-  ivaAmount          Float
-  finalPrice         Float
-  pricePerM2         Float
+  id           String @id @default(cuid())
+  quoteType    String // "INTERIOR" | "EXTERIOR"
+
+  clientName   String
+  facilityName String
+
+  // Resultados calculados (comunes)
+  totalHoursMonth   Float   @default(0)
+  directCost        Float   @default(0)
+  overheadCost      Float   @default(0)
+  totalCost         Float   @default(0)
+  marginPct         Float   @default(0)
+  subtotalPrice     Float   @default(0)
+  ivaAmount         Float   @default(0)
+  finalPrice        Float   @default(0)
+  pricePerM2        Float   @default(0)
 
   // Snapshot de los parámetros usados en ese momento (JSONB en Postgres)
-  parameterSnapshot  Json
-  
-  lineItems          QuoteLineItem[]
-  createdAt          DateTime        @default(now())
+  parameterSnapshot Json
+
+  // Relaciones específicas (una u otra se llena según quoteType)
+  interiorDetails InteriorQuoteDetails?
+  exteriorDetails ExteriorQuoteDetails?
+
+  lineItems QuoteLineItem[]
+  createdAt DateTime        @default(now())
 }
 
-// 3. Líneas de desglose explicables para la interfaz
+// ============================================================
+// 3. Detalles específicos de Limpieza INTERIOR
+// ============================================================
+model InteriorQuoteDetails {
+  id      String @id @default(cuid())
+  quoteId String @unique
+  quote   Quote  @relation(fields: [quoteId], references: [id], onDelete: Cascade)
+
+  facilityType      String // OFFICE, HEALTH, INDUSTRIAL, RESIDENTIAL
+  floorMaterial     String // TILE, VINYL, CARPET, MARBLE
+  areaM2            Float
+  bathroomsCount    Int    @default(0)
+  windowsM2         Float  @default(0)
+  riskLevel         String // LOW, MEDIUM, HIGH
+  trafficLevel      String // LOW, MEDIUM, HIGH
+  disinfectionLevel String // BASIC, STANDARD_SPOT, CLINICAL
+  frequencyType     String // SPOT, WEEKLY, MONTHLY_DAILY
+  eventsPerMonth    Float
+
+  // Resultados específicos de interior
+  effectiveRateM2H Float
+  hoursPerEvent    Float
+
+  createdAt DateTime @default(now())
+}
+
+// ============================================================
+// 4. Detalles específicos de Limpieza EXTERIOR
+// ============================================================
+model ExteriorQuoteDetails {
+  id      String @id @default(cuid())
+  quoteId String @unique
+  quote   Quote  @relation(fields: [quoteId], references: [id], onDelete: Cascade)
+
+  // Tipo de servicio (múltiple: DESBROCE, BARRIDO_CALLES, RETIRO_ESCOMBROS)
+  servicesRequested String[]
+
+  // Dimensiones
+  areaM2       Float
+  linearMeters Float? // para barrido de calles/aceras
+
+  // Condición del terreno
+  vegetationLevel String  // LIGHT, MEDIUM, SEVERE
+  terrainSlope    String  // FLAT, MODERATE, STEEP
+  accessibility   String  // MACHINERY, MANUAL_ONLY, MIXED
+  hasTrees        Boolean @default(false)
+
+  // Escombros
+  debrisVolumeM3     Float?
+  debrisType         String? // CONSTRUCTION, VEGETAL, MIXED, DOMESTIC
+  volquetasEstimated Float?
+
+  // Logística
+  distanceToDumpKm   Float?
+  mobilizationNeeded Boolean @default(false)
+
+  // Factores aplicados (snapshot del cálculo)
+  baseRateM2       Float
+  vegetationFactor Float
+  slopeFactor      Float
+  accessFactor     Float
+
+  // Resultados calculados
+  effectiveRateM2    Float
+  cleaningCost       Float
+  debrisDisposalCost Float
+  mobilizationCost   Float
+  totalExteriorCost  Float
+
+  createdAt DateTime @default(now())
+}
+
+// ============================================================
+// 5. Líneas de desglose explicables para la interfaz
+// ============================================================
 model QuoteLineItem {
-  id          String  @id @default(cuid())
+  id          String @id @default(cuid())
   quoteId     String
-  quote       Quote   @relation(fields: [quoteId], references: [id], onDelete: Cascade)
-  category    String  // "LABOR", "SUPPLIES", "EQUIPMENT", "OVERHEAD", "MARGIN", "DISCOUNT_SURCHARGE"
+  quote       Quote  @relation(fields: [quoteId], references: [id], onDelete: Cascade)
+
+  category    String // "LABOR", "SUPPLIES", "EQUIPMENT", "OVERHEAD", "MARGIN",
+                     // "DISCOUNT_SURCHARGE", "DEBRIS_DISPOSAL", "MOBILIZATION"
   concept     String
   formulaUsed String
   explanation String
