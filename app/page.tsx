@@ -493,11 +493,23 @@ export default function CleanQuoteApp() {
                           </div>
                           <div>
                             <label className="block text-[11px] font-bold text-stone-500 mb-1">Unidades Sanitarias (Baños)</label>
-                            <input type="number" placeholder="Auto-calculado" value={bathroomsCount} onChange={(e) => setBathroomsCount(e.target.value)} className="w-full border border-stone-200 rounded-md p-2 text-xs outline-none" />
+                            <input 
+                              type="number" 
+                              placeholder="Auto-calculado" 
+                              value={bathroomsCount} 
+                              onChange={(e) => setBathroomsCount(e.target.value ? Number(e.target.value) : "")} 
+                              className="w-full border border-stone-200 rounded-md p-2 text-xs outline-none" 
+                            />
                           </div>
                           <div>
                             <label className="block text-[11px] font-bold text-stone-500 mb-1">Superficie Vidriada (m²)</label>
-                            <input type="number" placeholder="Ej. 15" value={windowsM2} onChange={(e) => setWindowsM2(e.target.value)} className="w-full border border-stone-200 rounded-md p-2 text-xs outline-none" />
+                            <input 
+                              type="number" 
+                              placeholder="Ej. 15" 
+                              value={windowsM2} 
+                              onChange={(e) => setWindowsM2(e.target.value ? Number(e.target.value) : "")} 
+                              className="w-full border border-stone-200 rounded-md p-2 text-xs outline-none" 
+                            />
                           </div>
                         </div>
                       )}
