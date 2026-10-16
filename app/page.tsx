@@ -79,15 +79,30 @@ function parseTranscript(transcript: string): Record<string, string> {
   else if (/todos los dias|diari[oa]|cada dia|lunes a viernes/.test(t)) patch.frequencyType = "MONTHLY_DAILY";
   else if (/semanal|por semana|cada semana/.test(t)) patch.frequencyType = "WEEKLY";
 
+  // ------------------------------------------------------------------------
+  // 5. TIPO DE INSTALACIÓN, RIESGO Y DESINFECCIÓN (ACTUALIZADO)
+  // ------------------------------------------------------------------------
   if (t.includes("oficina")) patch.facilityType = "OFFICE";
   if (/\b(casa|vivienda|residencia|residencial|departamento)\b/.test(t)) patch.facilityType = "RESIDENTIAL";
   if (/industrial|fabrica|bodega|planta/.test(t)) patch.facilityType = "INDUSTRIAL";
   
-  if (/hospital|clinic[oa]|consultorio|medico|desinfeccion clinic[oa]/.test(t)) {
+  // NUEVA REGLA: Post-Obra y Escombros
+  // Detecta palabras como "post obra", "post construccion", "escombros", "remodelacion", "desechos de construccion"
+  if (/post ?obra|post ?construccion|escombros|remodelacion|desechos de construccion/.test(t)) {
+    patch.facilityType = "POST_CONSTRUCTION";
+    // Opcional: El post-obra suele ser un servicio de "Única Vez" y riesgo medio
+    patch.frequencyType = "SPOT"; 
+    patch.riskLevel = "MEDIUM";
+  }
+
+  // REGLA CLÍNICA AMPLIADA: Hospitales y Riesgo Biológico
+  // Ahora detecta "desechos medicos", "desechos biologicos", "riesgo biologico", "biologico"
+  if (/hospital|clinic[oa]|consultorio|medico|desinfeccion clinic[oa]|desechos medicos|desechos biologicos|riesgo biologico|biologicos?/.test(t)) {
     patch.facilityType = "HEALTH";
     patch.disinfectionLevel = "CLINICAL";
     patch.riskLevel = "HIGH";
   }
+  // ------------------------------------------------------------------------
 
   if (/porcelanato|baldosa|ceramica/.test(t)) patch.floorMaterial = "TILE";
   if (t.includes("vinilo")) patch.floorMaterial = "VINYL";
