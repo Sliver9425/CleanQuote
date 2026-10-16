@@ -24,6 +24,8 @@ model Quote {
   id                 String          @id @default(cuid())
   clientName         String
   facilityName       String
+  latitude           Float?          // NUEVO: Opcional para futuros mapas (Análisis Espacial)
+  longitude          Float?          // NUEVO: Opcional para futuros mapas
   facilityType       String          // OFFICE, HEALTH, INDUSTRIAL, RESIDENTIAL
   floorMaterial      String          // TILE, VINYL, CARPET, MARBLE
   areaM2             Float

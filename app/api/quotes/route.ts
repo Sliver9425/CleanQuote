@@ -2,11 +2,42 @@ import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
 import { calculateCleanQuote, QuoteInput } from '@/lib/pricing/engine';
 
+// FUNCIÓN PARA CONVERTIR DIRECCIÓN A COORDENADAS REALES
+async function geocodeAddress(address: string) {
+  try {
+    // Le agregamos "Quito, Ecuador" para ayudar al buscador a no confundirse con otras ciudades
+    const query = encodeURIComponent(`${address}, Quito, Ecuador`);
+    
+    // Llamada a la API gratuita de OpenStreetMap
+    const response = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${query}&limit=1`, {
+      headers: {
+        // Nominatim exige que te identifiques con un User-Agent
+        'User-Agent': 'CleanQuote-Hackathon-App/1.0'
+      }
+    });
+
+    const data = await response.json();
+
+    if (data && data.length > 0) {
+      return {
+        lat: parseFloat(data[0].lat),
+        lon: parseFloat(data[0].lon)
+      };
+    }
+  } catch (error) {
+    console.error("Error obteniendo coordenadas:", error);
+  }
+
+  // Fallback: Si el usuario escribe una dirección muy rara o falla la API, 
+  // lo mandamos al centro de Quito por defecto para que no se rompa el mapa.
+  return { lat: -0.1806, lon: -78.4678 };
+}
+
 export async function POST(request: Request) {
   try {
     const body = await request.json();
 
-    // 1. SMART DEFAULTS (Hidratación): Rellenamos los datos faltantes
+    // 1. SMART DEFAULTS (Hidratación)
     const safeInput: QuoteInput = {
       areaM2: Number(body.areaM2) || 100,
       facilityType: body.facilityType || 'OFFICE',
@@ -22,17 +53,26 @@ export async function POST(request: Request) {
       isNightShift: body.isNightShift || false,
     };
 
-    // 2. Usamos el motor matemático con los datos SEGUROS (safeInput)
+    // 2. Usamos el motor matemático
     const result = calculateCleanQuote(safeInput);
 
-    // 3. Guardamos en la base de datos asegurando que no haya NaNs
+    // 3. OBTENEMOS COORDENADAS REALES EN TIEMPO REAL
+    const facilityName = body.facilityName || 'Instalación Principal';
+    const coordinates = await geocodeAddress(facilityName);
+
+    // 4. Guardamos en la base de datos con las coordenadas reales
     const savedQuote = await prisma.quote.create({
       data: {
         clientName: body.clientName || 'Cliente Demo',
-        facilityName: body.facilityName || 'Instalación Principal',
+        facilityName: facilityName,
         facilityType: safeInput.facilityType,
         floorMaterial: safeInput.floorMaterial,
         areaM2: safeInput.areaM2,
+        
+        // INYECTAMOS LA LATITUD Y LONGITUD REAL
+        latitude: coordinates.lat,
+        longitude: coordinates.lon,
+        
         bathroomsCount: safeInput.bathroomsCount,
         windowsM2: body.windowsM2 !== undefined ? Number(body.windowsM2) : Math.floor(Number(body.areaM2) * 0.05) || 0,
         riskLevel: safeInput.riskLevel,
