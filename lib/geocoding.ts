@@ -3,7 +3,7 @@ import { GoogleGenerativeAI } from "@google/generative-ai";
 
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY || "");
 
-// Modelos configurables desde .env (si no existen, usa los valores actuales)
+// Modelos configurables desde .env (verifica que existan en tu cuenta)
 const GEMINI_MODEL = process.env.GEMINI_MODEL || "gemini-1.5-flash";
 const GROQ_MODEL = process.env.GROQ_MODEL || "qwen/qwen3.8-27b";
 
@@ -18,6 +18,36 @@ type ParsedAddress = {
   sector: string | null; // barrio/sector SOLO si el cliente lo mencionó
 };
 
+// ---------------------------------------------------------------------------
+// LECTOR LOCAL (sin IA): separa "Av. X y Calle Y" con reglas simples
+// ---------------------------------------------------------------------------
+const STREET_PREFIX =
+  /^(av\.?|avenida|calle|c\.|pasaje|psj\.?|autopista|via|vía|ruta|camino)\s+/i;
+
+const cleanStreet = (s: string) =>
+  s.replace(STREET_PREFIX, "").replace(/[.,;]+$/g, "").replace(/\s+/g, " ").trim();
+
+function parseAddressLocal(raw: string): ParsedAddress {
+  const text = raw.replace(/\s+/g, " ").trim();
+  const parts = text.split(/\s+(?:y|&|esquina|con)\s+/i);
+
+  if (parts.length >= 2) {
+    const s1 = cleanStreet(parts[0]);
+    const s2 = cleanStreet(parts[1]);
+    if (s1 && s2) return { street1: s1, street2: s2, landmark: null, sector: null };
+  }
+
+  if (STREET_PREFIX.test(text)) {
+    return { street1: cleanStreet(text), street2: null, landmark: null, sector: null };
+  }
+
+  // Sin calles reconocibles: lo tratamos como lugar conocido
+  return { street1: null, street2: null, landmark: text || null, sector: null };
+}
+
+// ---------------------------------------------------------------------------
+// LECTOR CON IA (solo ordena el texto, no inventa lugares)
+// ---------------------------------------------------------------------------
 const PROMPT = (raw: string) => `
 Eres un normalizador de direcciones de Quito, Ecuador. Tu trabajo es ORDENAR el texto del cliente, NO adivinar ni inventar lugares.
 
@@ -59,7 +89,6 @@ function parseJson(text: string): ParsedAddress | null {
   }
 }
 
-// Paso 1: la IA solo ordena la dirección (Gemini, con Groq de respaldo)
 async function parseAddressWithAI(raw: string): Promise<ParsedAddress | null> {
   const prompt = PROMPT(raw);
 
@@ -71,8 +100,9 @@ async function parseAddressWithAI(raw: string): Promise<ParsedAddress | null> {
     const res = await model.generateContent(prompt);
     const parsed = parseJson(res.response.text());
     if (parsed) return parsed;
-  } catch {
-    console.warn("⚠️ Gemini falló en geocoding. Activando Fallback a Groq...");
+    console.warn("⚠️ Gemini respondió, pero no en JSON válido.");
+  } catch (e) {
+    console.warn(`⚠️ Gemini falló (modelo: ${GEMINI_MODEL}):`, String(e).slice(0, 300));
   }
 
   try {
@@ -90,40 +120,66 @@ async function parseAddressWithAI(raw: string): Promise<ParsedAddress | null> {
       }),
       signal: AbortSignal.timeout(10000),
     });
-    if (!groqRes.ok) return null;
+    if (!groqRes.ok) {
+      const errBody = await groqRes.text().catch(() => "");
+      console.warn(`⚠️ Groq falló (modelo: ${GROQ_MODEL}) HTTP ${groqRes.status}:`, errBody.slice(0, 300));
+      return null;
+    }
     const data = await groqRes.json();
-    return parseJson(data.choices[0].message.content);
-  } catch {
+    const parsed = parseJson(data.choices[0].message.content);
+    if (!parsed) console.warn("⚠️ Groq respondió, pero no en JSON válido.");
+    return parsed;
+  } catch (e) {
+    console.warn("⚠️ Groq falló:", String(e).slice(0, 300));
     return null;
   }
 }
 
-const escapeRegex = (s: string) => s.replace(/[.*+?^${}()|[\]\\"]/g, "\\$&");
+// ---------------------------------------------------------------------------
+// BÚSQUEDA EN MAPA
+// ---------------------------------------------------------------------------
+// Regex que ignora mayúsculas y tildes ("Garcia" encuentra "García")
+const accentInsensitive = (s: string) =>
+  s
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[.*+?^${}()|[\]\\"]/g, "\\$&")
+    .replace(/a/gi, "[aáàäAÁ]")
+    .replace(/e/gi, "[eéèëEÉ]")
+    .replace(/i/gi, "[iíìïIÍ]")
+    .replace(/o/gi, "[oóòöOÓ]")
+    .replace(/u/gi, "[uúùüUÚ]")
+    .replace(/n/gi, "[nñNÑ]");
 
-// Paso 2a: punto exacto donde se cruzan dos calles (OpenStreetMap / Overpass)
+// Punto exacto donde se cruzan dos calles (OpenStreetMap / Overpass)
 async function findIntersection(street1: string, street2: string) {
   try {
-    const q = `[out:json][timeout:15];
-      way["highway"]["name"~"${escapeRegex(street1)}",i](${QUITO_BBOX})->.a;
-      way["highway"]["name"~"${escapeRegex(street2)}",i](${QUITO_BBOX})->.b;
+    const q = `[out:json][timeout:20];
+      way["highway"]["name"~"${accentInsensitive(street1)}",i](${QUITO_BBOX})->.a;
+      way["highway"]["name"~"${accentInsensitive(street2)}",i](${QUITO_BBOX})->.b;
       node(w.a)(w.b);
       out 1;`;
     const res = await fetch("https://overpass-api.de/api/interpreter", {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
       body: "data=" + encodeURIComponent(q),
-      signal: AbortSignal.timeout(15000),
+      signal: AbortSignal.timeout(20000),
     });
-    if (!res.ok) return null;
+    if (!res.ok) {
+      console.warn(`⚠️ Overpass respondió HTTP ${res.status}`);
+      return null;
+    }
     const data = await res.json();
     const node = data?.elements?.[0];
+    if (!node) console.log(`[INFO] Overpass no encontró cruce entre "${street1}" y "${street2}"`);
     return node ? { lat: node.lat as number, lon: node.lon as number } : null;
-  } catch {
+  } catch (e) {
+    console.warn("⚠️ Overpass falló:", String(e).slice(0, 200));
     return null;
   }
 }
 
-// Paso 2b: búsqueda en Nominatim limitada a Quito
+// Búsqueda en Nominatim limitada a Quito
 async function nominatim(query: string) {
   try {
     const url =
@@ -137,39 +193,50 @@ async function nominatim(query: string) {
     if (data && data.length > 0) {
       return { lat: parseFloat(data[0].lat), lon: parseFloat(data[0].lon) };
     }
-  } catch {}
+  } catch (e) {
+    console.warn("⚠️ Nominatim falló:", String(e).slice(0, 200));
+  }
   return null;
 }
 
+// ---------------------------------------------------------------------------
+// FUNCIÓN PRINCIPAL
+// ---------------------------------------------------------------------------
 export async function geocodeAddress(rawAddress: string): Promise<{ lat: number; lon: number }> {
   try {
-    const parsed = await parseAddressWithAI(rawAddress);
-    console.log(`[GEOCODING] Original: "${rawAddress}" -> IA:`, parsed);
+    // 1) Primero el lector local; la IA solo se usa si no basta
+    const local = parseAddressLocal(rawAddress);
+    let parsed: ParsedAddress = local;
+
+    if (!(local.street1 && local.street2)) {
+      const ai = await parseAddressWithAI(rawAddress);
+      if (ai) parsed = ai;
+    }
+    console.log(`[GEOCODING] Original: "${rawAddress}" ->`, parsed);
 
     let hit: { lat: number; lon: number } | null = null;
 
-    // 1) Esquina exacta (calle + calle)
-    if (parsed?.street1 && parsed?.street2) {
+    // 2) Esquina exacta (calle + calle)
+    if (parsed.street1 && parsed.street2) {
       hit = await findIntersection(parsed.street1, parsed.street2);
       if (hit) console.log("[EXITO] Esquina encontrada en OpenStreetMap");
     }
 
-    // 2) Lugar conocido
-    if (!hit && parsed?.landmark) {
+    // 3) Lugar conocido
+    if (!hit && parsed.landmark) {
       hit = await nominatim(`${parsed.landmark}, Quito, Ecuador`);
       if (hit) console.log(`[EXITO] Lugar encontrado: ${parsed.landmark}`);
     }
 
-    // 3) Calle principal (con sector si existe)
-    if (!hit && parsed?.street1) {
+    // 4) Calle principal (con sector si existe), luego la segunda calle
+    if (!hit && parsed.street1) {
       const sector = parsed.sector ? `${parsed.sector}, ` : "";
       hit = await nominatim(`${parsed.street1}, ${sector}Quito, Ecuador`);
-      if (hit) console.log(`[EXITO] Calle encontrada: ${parsed.street1}`);
+      if (hit) console.log(`[EXITO] Calle encontrada: ${parsed.street1} (aprox.)`);
     }
-
-    // 4) Último intento: el texto original tal cual
-    if (!hit) {
-      hit = await nominatim(`${rawAddress}, Quito, Ecuador`);
+    if (!hit && parsed.street2) {
+      hit = await nominatim(`${parsed.street2}, Quito, Ecuador`);
+      if (hit) console.log(`[EXITO] Calle encontrada: ${parsed.street2} (aprox.)`);
     }
 
     if (hit) return hit;
