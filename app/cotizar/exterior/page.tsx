@@ -3,9 +3,53 @@
 import React, { useState, useEffect, useRef } from "react";
 import { Trees, Sparkles, Calculator, Save, UploadCloud, Loader2, Settings2, ChevronDown, ChevronUp, Mic, CheckCircle, RefreshCcw, ArrowRight, Download, ArrowLeft } from "lucide-react";
 import Link from "next/link";
+import { DatePicker } from "@/components/DatePicker";
 
 // ============================================================================
-// 1. MOTOR DE PARSEO DE VOZ (compartido)
+// HELPER: redacta la cláusula TERCERA según la frecuencia y las fechas
+// ============================================================================
+function getPlazoContrato(
+  serviceDate: Date | undefined,
+  serviceEndDate: Date | undefined,
+  frequencyType: string
+): React.ReactNode {
+  const fmt = (d: Date) =>
+    d.toLocaleDateString("es-ES", { day: "2-digit", month: "long", year: "numeric" });
+
+  const start = serviceDate ? fmt(serviceDate) : "__ de ____________ de 20__";
+  const end = serviceEndDate ? fmt(serviceEndDate) : null;
+
+  if (frequencyType === "SPOT") {
+    return (
+      <>
+        El servicio se ejecutará{" "}
+        {end ? (
+          <>desde el <strong>{start}</strong> hasta el <strong>{end}</strong></>
+        ) : (
+          <>el día <strong>{start}</strong></>
+        )}
+        . Al ser un servicio puntual, no genera renovación automática.
+      </>
+    );
+  }
+
+  return (
+    <>
+      El servicio iniciará el <strong>{start}</strong> y{" "}
+      {end ? (
+        <>tendrá vigencia hasta el <strong>{end}</strong></>
+      ) : (
+        <>se mantendrá vigente <strong>hasta nuevo aviso por escrito</strong></>
+      )}
+      . Frecuencia asignada:{" "}
+      <strong>{frequencyType === "WEEKLY" ? "Semanal" : "Mensual / Diaria"}</strong>.
+      Cualquier cambio deberá ser aceptado por ambas partes.
+    </>
+  );
+}
+
+// ============================================================================
+// 1. MOTOR DE PARSEO DE VOZ
 // ============================================================================
 const NUMBER_WORDS = new Map<string, number>([
   ["cero", 0], ["un", 1], ["uno", 1], ["una", 1], ["dos", 2], ["tres", 3], ["cuatro", 4],
@@ -50,9 +94,6 @@ function normalizeSpeech(raw: string): string {
   return wordsToDigits(base);
 }
 
-// ============================================================================
-// PARSER ESPECÍFICO PARA EXTERIOR
-// ============================================================================
 function parseExteriorTranscript(transcript: string): Record<string, any> {
   const t = normalizeSpeech(transcript);
   const patch: Record<string, any> = {};
@@ -60,15 +101,12 @@ function parseExteriorTranscript(transcript: string): Record<string, any> {
   const NUM = "([0-9]+(?:[.,][0-9]+)?)";
   let rest = t;
 
-  // Metros lineales (barrido)
   const linearMatch = rest.match(new RegExp(`${NUM}\\s*(?:metros lineales|metro lineal|ml)`));
   if (linearMatch) { patch.linearMeters = toNum(linearMatch[1]); rest = rest.replace(linearMatch[0], " "); }
 
-  // Escombros (volumen)
   const debrisMatch = rest.match(new RegExp(`${NUM}\\s*(?:metros cubicos|metro cubico|m3)`));
   if (debrisMatch) { patch.debrisVolumeM3 = toNum(debrisMatch[1]); rest = rest.replace(debrisMatch[0], " "); }
 
-  // Área
   const areaMatch = rest.match(new RegExp(`${NUM}\\s*(?:metros cuadrados|metro cuadrado|metros|metro|m2)`));
   if (areaMatch) {
     patch.areaM2 = toNum(areaMatch[1]);
@@ -78,41 +116,33 @@ function parseExteriorTranscript(transcript: string): Record<string, any> {
     if (looseNum) patch.areaM2 = toNum(looseNum[1]);
   }
 
-  // Servicios solicitados
   const services: string[] = [];
   if (/desbroce|maleza|hierba|pasto|arbusto|monte|desmontar/.test(t)) services.push("DESBROCE");
   if (/barrido|calle|acera|vereda|bordillo/.test(t)) services.push("BARRIDO_CALLES");
   if (/escombro|desecho|basura|retiro|desalojo|limpieza de lote|botar/.test(t)) services.push("RETIRO_ESCOMBROS");
   if (services.length) patch.servicesRequested = services;
 
-  // Vegetación
   if (/vegetacion ligera|pasto alto|hierba alta|poco monte/.test(t)) patch.vegetationLevel = "LIGHT";
   if (/maleza densa|arbustos|matorral|vegetacion media|monte medio/.test(t)) patch.vegetationLevel = "MEDIUM";
   if (/vegetacion severa|lenosa|abandonado|abandono|monte cerrado|muy tupido/.test(t)) patch.vegetationLevel = "SEVERE";
 
-  // Pendiente
   if (/plano|plana|sin pendiente/.test(t)) patch.terrainSlope = "FLAT";
   if (/pendiente moderada|algo de pendiente|inclinado/.test(t)) patch.terrainSlope = "MODERATE";
   if (/pendiente pronunciada|muy inclinado|empinado|barranco|ladera/.test(t)) patch.terrainSlope = "STEEP";
 
-  // Acceso
   if (/bobcat|minicargadora|maquinaria|retroexcavadora|volqueta entra|entra maquina/.test(t)) patch.accessibility = "MACHINERY";
   if (/no entra|solo manual|a pie|sin acceso|todo manual/.test(t)) patch.accessibility = "MANUAL_ONLY";
   if (/mixto|parte manual|parte maquina/.test(t)) patch.accessibility = "MIXED";
 
-  // Árboles
   if (/arboles|arbol|troncos|tala|poda/.test(t)) patch.hasTrees = true;
 
-  // Tipo de escombro
   if (/escombro de construccion|obra|cemento|ladrillo|hormigon/.test(t)) patch.debrisType = "CONSTRUCTION";
   if (/escombro vegetal|ramas|hojas|troncos|poda/.test(t)) patch.debrisType = "VEGETAL";
   if (/escombro mixto|varios tipos/.test(t)) patch.debrisType = "MIXED";
   if (/escombro domestico|basura comun|hogar/.test(t)) patch.debrisType = "DOMESTIC";
 
-  // Movilización
   if (/movilizacion|traslado|traer maquina|traer bobcat/.test(t)) patch.mobilizationNeeded = true;
 
-  // Frecuencia
   if (/puntual|una sola vez|una vez|unico/.test(t)) patch.frequencyType = "SPOT";
   else if (/todos los dias|diario|lunes a viernes/.test(t)) patch.frequencyType = "MONTHLY_DAILY";
   else if (/semanal|cada semana/.test(t)) patch.frequencyType = "WEEKLY";
@@ -128,6 +158,8 @@ export default function ExteriorQuoteApp() {
   const [showConfirmModal, setShowConfirmModal] = useState(false);
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [todayDate, setTodayDate] = useState("");
+  const [serviceDate, setServiceDate] = useState<Date | undefined>(undefined);
+  const [serviceEndDate, setServiceEndDate] = useState<Date | undefined>(undefined); // ← NUEVO v2
 
   const [clientName, setClientName] = useState("");
   const [facilityName, setFacilityName] = useState("");
@@ -159,6 +191,14 @@ export default function ExteriorQuoteApp() {
   const listeningRef = useRef(false);
   const restartTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const finalTranscriptRef = useRef("");
+
+  // ← NUEVO v2: validación de fechas
+  const dateError =
+    serviceEndDate && !serviceDate
+      ? "Indica la fecha de inicio antes que la fecha de fin."
+      : serviceDate && serviceEndDate && serviceEndDate < serviceDate
+      ? "La fecha de fin no puede ser anterior a la fecha de inicio."
+      : null;
 
   useEffect(() => {
     setTodayDate(new Date().toLocaleDateString("es-ES", { year: 'numeric', month: 'long', day: 'numeric' }));
@@ -283,6 +323,8 @@ export default function ExteriorQuoteApp() {
         debrisVolumeM3: debrisVolumeM3 !== "" ? Number(debrisVolumeM3) : undefined,
         distanceToDumpKm: distanceToDumpKm !== "" ? Number(distanceToDumpKm) : undefined,
         mobilizationNeeded,
+        serviceDate: serviceDate ? serviceDate.toISOString() : null,
+        serviceEndDate: serviceEndDate ? serviceEndDate.toISOString() : null, // ← NUEVO v2
         ...form,
       };
 
@@ -313,6 +355,8 @@ export default function ExteriorQuoteApp() {
     setClientName(""); setFacilityName(""); setMobilizationNeeded(false);
     setImagePreview(null); setTranscript(""); setApplyMsg(null); setQuoteResult(null);
     setShowAdvanced(false);
+    setServiceDate(undefined);
+    setServiceEndDate(undefined); // ← NUEVO v2
     setForm({
       servicesRequested: ["DESBROCE"], vegetationLevel: "LIGHT", terrainSlope: "FLAT",
       accessibility: "MACHINERY", hasTrees: false, debrisType: "CONSTRUCTION", frequencyType: "SPOT",
@@ -418,7 +462,6 @@ export default function ExteriorQuoteApp() {
                   </div>
                 )}
 
-                {/* Asistente de Voz */}
                 <div className="bg-white p-6 rounded-2xl shadow-sm border border-stone-200">
                   <div className="flex justify-between items-center mb-6">
                     <h2 className="font-bold text-sm flex items-center gap-2 text-stone-900">
@@ -456,7 +499,6 @@ export default function ExteriorQuoteApp() {
                   </div>
                 </div>
 
-                {/* Formulario Manual */}
                 <div className="bg-white rounded-2xl shadow-sm border border-stone-200">
                   <div className="p-6 border-b border-stone-100 flex justify-between items-center">
                     <div>
@@ -467,7 +509,6 @@ export default function ExteriorQuoteApp() {
                   </div>
 
                   <div className="p-6 space-y-5">
-                    {/* Servicios solicitados */}
                     <div>
                       <label className="block text-[11px] font-bold uppercase tracking-wider text-stone-500 mb-2">Servicios Requeridos</label>
                       <div className="grid grid-cols-3 gap-2">
@@ -534,7 +575,6 @@ export default function ExteriorQuoteApp() {
                       </select>
                     </div>
 
-                    {/* Opciones avanzadas */}
                     <div className="pt-2">
                       <button onClick={() => setShowAdvanced(!showAdvanced)} className="w-full flex items-center justify-between p-3 border border-stone-200 rounded-lg bg-stone-50 hover:bg-stone-100 transition text-left">
                         <span className="text-xs font-bold text-stone-700 flex items-center gap-2"><Settings2 className="w-3.5 h-3.5"/> Escombros, Árboles y Logística</span>
@@ -579,7 +619,6 @@ export default function ExteriorQuoteApp() {
                 </div>
               </div>
 
-              {/* Columna derecha */}
               <div className="lg:col-span-5 space-y-6">
                 <div className="bg-white p-6 rounded-2xl shadow-sm border border-stone-200">
                   <div className="mb-6">
@@ -595,10 +634,38 @@ export default function ExteriorQuoteApp() {
                       <label className="block text-[11px] font-bold uppercase tracking-wider text-stone-500 mb-1.5">Dirección del Terreno</label>
                       <input type="text" value={facilityName} onChange={(e) => setFacilityName(e.target.value)} placeholder="Ej. Lote 45, Vía a Samborondón" className="w-full border border-stone-200 rounded-lg p-2.5 text-sm outline-none focus:border-emerald-600" />
                     </div>
+
+                    {/* ← NUEVO v2: rango de fechas */}
+                    <div className="grid grid-cols-2 gap-4">
+                      <div>
+                        <label className="block text-[11px] font-bold uppercase tracking-wider text-stone-500 mb-1.5">Inicio del Servicio</label>
+                        <DatePicker date={serviceDate} setDate={setServiceDate} placeholder="Inicio" accent="emerald" />
+                      </div>
+                      <div>
+                        <label className="block text-[11px] font-bold uppercase tracking-wider text-stone-500 mb-1.5">
+                          Fin <span className="text-stone-400 normal-case font-medium">(opcional)</span>
+                        </label>
+                        <DatePicker
+                          date={serviceEndDate}
+                          setDate={setServiceEndDate}
+                          placeholder="Fin"
+                          accent="emerald"
+                          disabled={serviceDate ? { before: serviceDate } : undefined}
+                        />
+                      </div>
+                    </div>
+
+                    {dateError && (
+                      <p className="text-[11px] font-medium text-red-600">{dateError}</p>
+                    )}
                   </div>
                 </div>
 
-                <button onClick={() => setShowConfirmModal(true)} disabled={isGenerating} className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-4 rounded-xl flex justify-center items-center gap-2 shadow-lg shadow-emerald-900/10 text-base transition disabled:opacity-70">
+                <button
+                  onClick={() => setShowConfirmModal(true)}
+                  disabled={isGenerating || !!dateError}
+                  className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-4 rounded-xl flex justify-center items-center gap-2 shadow-lg shadow-emerald-900/10 text-base transition disabled:opacity-70"
+                >
                   {isGenerating ? <Loader2 className="w-5 h-5 animate-spin"/> : <Calculator className="w-5 h-5"/>}
                   {isGenerating ? "Procesando..." : "Calcular Cotización Exacta"}
                 </button>
@@ -606,7 +673,6 @@ export default function ExteriorQuoteApp() {
             </div>
           )}
 
-          {/* Modal */}
           {showConfirmModal && (
             <div className="fixed inset-0 bg-stone-900/50 backdrop-blur-sm flex items-center justify-center z-50 p-4 animate-in fade-in duration-200">
               <div className="bg-white rounded-2xl shadow-2xl max-w-sm w-full p-6 text-center border border-stone-200">
@@ -706,7 +772,6 @@ export default function ExteriorQuoteApp() {
         </main>
       </div>
 
-      {/* VISTA DE IMPRESIÓN */}
       {step === 3 && quoteResult && (
         <div className="hidden print:block w-full bg-white text-black text-sm p-10 font-sans mx-auto max-w-[21cm]">
           <div className="mb-8">
@@ -735,7 +800,11 @@ export default function ExteriorQuoteApp() {
             <div className="space-y-4 text-justify">
               <p><strong>PRIMERA. OBJETO:</strong> La prestadora realizará servicios de desbroce, barrido de calles/aceras y/o retiro de escombros en el terreno ubicado en <strong>{facilityName || "la dirección detallada en la sección del Cliente"}</strong>, según el alcance y precios detallados en la cotización de la segunda página.</p>
               <p><strong>SEGUNDA. ALCANCE:</strong> El servicio incluye corte de vegetación, limpieza superficial, recolección y desalojo de escombros a escombreras autorizadas por el GAD correspondiente, conforme a lo aceptado en la cotización. El cliente declara conocer las restricciones municipales sobre disposición de escombros.</p>
-              <p><strong>TERCERA. PLAZO Y FRECUENCIA:</strong> El servicio iniciará el día __ de ____________ de 20__. Frecuencia asignada: <strong>{form.frequencyType === "SPOT" ? "Única vez" : form.frequencyType === "WEEKLY" ? "Semanal" : "Mensual / Diaria"}</strong>. Cualquier cambio deberá ser aceptado por ambas partes.</p>
+              <p>
+                <strong>TERCERA. PLAZO Y FRECUENCIA:</strong>{" "}
+                {/* ← CAMBIO v2: cláusula adaptativa según frecuencia y fechas */}
+                {getPlazoContrato(serviceDate, serviceEndDate, form.frequencyType)}
+              </p>
               <p><strong>CUARTA. PRECIO Y PAGO:</strong> El cliente pagará el valor total aprobado en la cotización mediante transferencia bancaria. Los comprobantes e impuestos aplicables se manejarán conforme a la normativa vigente.</p>
               <p><strong>QUINTA. OBLIGACIONES DE LA PRESTADORA:</strong> Realizar los trabajos con diligencia, asignar personal capacitado, utilizar maquinaria en buen estado, gestionar el desalojo de escombros en sitios autorizados y respetar las normas ambientales y de seguridad.</p>
               <p><strong>SEXTA. OBLIGACIONES DEL CLIENTE:</strong> Facilitar el acceso al terreno, informar sobre riesgos, linderos o restricciones municipales, y pagar en los plazos pactados.</p>
@@ -833,9 +902,6 @@ export default function ExteriorQuoteApp() {
   );
 }
 
-// ============================================================================
-// TIPOS PARA SPEECH RECOGNITION
-// ============================================================================
 type SpeechRecognitionEvent = Event & { resultIndex: number; results: { length: number; [i: number]: { [i: number]: { transcript: string; isFinal?: boolean } } }; };
 type SpeechRecognitionErrorEvent = Event & { error: string };
 type SpeechRecognition = { lang: string; continuous: boolean; interimResults: boolean; maxAlternatives: number; onresult: ((ev: SpeechRecognitionEvent) => void) | null; onerror: ((event: SpeechRecognitionErrorEvent) => void) | null; onend: (() => void) | null; onstart: (() => void) | null; onaudiostart: (() => void) | null; onspeechstart: (() => void) | null; start: () => void; stop: () => void; abort: () => void; };

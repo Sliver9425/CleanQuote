@@ -3,6 +3,50 @@
 import React, { useState, useEffect, useRef } from "react";
 import { Building2, Sparkles, Calculator, Save, UploadCloud, Loader2, Settings2, ChevronDown, ChevronUp, Image as ImageIcon, Mic, CheckCircle, RefreshCcw, ArrowRight, Download } from "lucide-react";
 import { getChemicalsForFacility, BASIS_LABEL } from "@/lib/pricing/chemicals";
+import { DatePicker } from "@/components/DatePicker";
+
+// ============================================================================
+// HELPER: redacta la cláusula TERCERA según la frecuencia y las fechas
+// ============================================================================
+function getPlazoContrato(
+  serviceDate: Date | undefined,
+  serviceEndDate: Date | undefined,
+  frequencyType: string
+): React.ReactNode {
+  const fmt = (d: Date) =>
+    d.toLocaleDateString("es-ES", { day: "2-digit", month: "long", year: "numeric" });
+
+  const start = serviceDate ? fmt(serviceDate) : "__ de ____________ de 20__";
+  const end = serviceEndDate ? fmt(serviceEndDate) : null;
+
+  if (frequencyType === "SPOT") {
+    return (
+      <>
+        El servicio se ejecutará{" "}
+        {end ? (
+          <>desde el <strong>{start}</strong> hasta el <strong>{end}</strong></>
+        ) : (
+          <>el día <strong>{start}</strong></>
+        )}
+        . Al ser un servicio puntual, no genera renovación automática.
+      </>
+    );
+  }
+
+  return (
+    <>
+      El servicio iniciará el <strong>{start}</strong> y{" "}
+      {end ? (
+        <>tendrá vigencia hasta el <strong>{end}</strong></>
+      ) : (
+        <>se mantendrá vigente <strong>hasta nuevo aviso por escrito</strong></>
+      )}
+      . Frecuencia asignada:{" "}
+      <strong>{frequencyType === "WEEKLY" ? "Semanal" : "Mensual / Diaria"}</strong>.
+      Cualquier cambio deberá ser aceptado por ambas partes.
+    </>
+  );
+}
 
 // ============================================================================
 // 1. MOTOR DE PARSEO DE VOZ
@@ -70,7 +114,7 @@ function parseTranscript(transcript: string): Record<string, string> {
   if (baths) { patch.bathroomsCount = String(Math.round(toNum(baths[1]))); rest = rest.replace(baths[0], " "); }
 
   const strictArea = rest.match(new RegExp(`${NUM}\\s*(?:metros cuadrados|metro cuadrado|metros|metro|m2)`));
-  if (strictArea) { patch.areaM2 = String(toNum(strictArea[1])); } 
+  if (strictArea) { patch.areaM2 = String(toNum(strictArea[1])); }
   else {
     const looseNum = rest.match(new RegExp(`\\b${NUM}\\b`));
     if (looseNum) { patch.areaM2 = String(toNum(looseNum[1])); }
@@ -80,30 +124,21 @@ function parseTranscript(transcript: string): Record<string, string> {
   else if (/todos los dias|diari[oa]|cada dia|lunes a viernes/.test(t)) patch.frequencyType = "MONTHLY_DAILY";
   else if (/semanal|por semana|cada semana/.test(t)) patch.frequencyType = "WEEKLY";
 
-  // ------------------------------------------------------------------------
-  // 5. TIPO DE INSTALACIÓN, RIESGO Y DESINFECCIÓN (ACTUALIZADO)
-  // ------------------------------------------------------------------------
   if (t.includes("oficina")) patch.facilityType = "OFFICE";
   if (/\b(casa|vivienda|residencia|residencial|departamento)\b/.test(t)) patch.facilityType = "RESIDENTIAL";
   if (/industrial|fabrica|bodega|planta/.test(t)) patch.facilityType = "INDUSTRIAL";
-  
-  // NUEVA REGLA: Post-Obra y Escombros
-  // Detecta palabras como "post obra", "post construccion", "escombros", "remodelacion", "desechos de construccion"
+
   if (/post ?obra|post ?construccion|escombros|remodelacion|desechos de construccion/.test(t)) {
     patch.facilityType = "POST_CONSTRUCTION";
-    // Opcional: El post-obra suele ser un servicio de "Única Vez" y riesgo medio
-    patch.frequencyType = "SPOT"; 
+    patch.frequencyType = "SPOT";
     patch.riskLevel = "MEDIUM";
   }
 
-  // REGLA CLÍNICA AMPLIADA: Hospitales y Riesgo Biológico
-  // Ahora detecta "desechos medicos", "desechos biologicos", "riesgo biologico", "biologico"
   if (/hospital|clinic[oa]|consultorio|medico|desinfeccion clinic[oa]|desechos medicos|desechos biologicos|riesgo biologico|biologicos?/.test(t)) {
     patch.facilityType = "HEALTH";
     patch.disinfectionLevel = "CLINICAL";
     patch.riskLevel = "HIGH";
   }
-  // ------------------------------------------------------------------------
 
   if (/porcelanato|baldosa|ceramica/.test(t)) patch.floorMaterial = "TILE";
   if (t.includes("vinilo")) patch.floorMaterial = "VINYL";
@@ -125,7 +160,6 @@ const FLOOR_OPTIONS = [
 const FLOOR_LABELS: Record<string, string> = Object.fromEntries(FLOOR_OPTIONS.map((o) => [o.value, o.label]));
 const MAX_PHOTOS = 4;
 
-// Reduce la foto antes de enviarla (más rápido y gasta menos cuota de la IA)
 async function resizeImage(file: File, maxSize = 1280): Promise<Blob> {
   try {
     const bitmap = await createImageBitmap(file);
@@ -150,8 +184,6 @@ async function analyzeOnePhoto(file: File): Promise<any> {
   return res.json();
 }
 
-// Combina lo detectado en varias fotos: lo más exigente gana en riesgo/tráfico/desinfección,
-// y los pisos se listan por frecuencia (el primero será el piso principal).
 function mergeDetections(results: any[]) {
   const LEVEL: Record<string, number> = { LOW: 0, MEDIUM: 1, HIGH: 2 };
   const DISINFECTION: Record<string, number> = { SPOT_STANDARD: 0, CONTINUOUS_BASIC: 1, CLINICAL: 2 };
@@ -189,13 +221,15 @@ export default function CleanQuoteApp() {
   const [showConfirmModal, setShowConfirmModal] = useState(false);
   const [showManualForm, setShowManualForm] = useState(false);
   const [todayDate, setTodayDate] = useState("");
+  const [serviceDate, setServiceDate] = useState<Date | undefined>(undefined);
+  const [serviceEndDate, setServiceEndDate] = useState<Date | undefined>(undefined); // ← NUEVO v2
 
   const [clientName, setClientName] = useState("");
   const [facilityName, setFacilityName] = useState("");
   const [areaM2, setAreaM2] = useState<number | "">(200);
   const [bathroomsCount, setBathroomsCount] = useState<number | "">("");
   const [windowsM2, setWindowsM2] = useState<number | "">("");
-  
+
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
   const [quoteResult, setQuoteResult] = useState<any>(null);
@@ -225,6 +259,14 @@ export default function CleanQuoteApp() {
   const listeningRef = useRef(false);
   const restartTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const finalTranscriptRef = useRef("");
+
+  // ← NUEVO v2: validación de fechas
+  const dateError =
+    serviceEndDate && !serviceDate
+      ? "Indica la fecha de inicio antes que la fecha de fin."
+      : serviceDate && serviceEndDate && serviceEndDate < serviceDate
+      ? "La fecha de fin no puede ser anterior a la fecha de inicio."
+      : null;
 
   useEffect(() => {
     setTodayDate(new Date().toLocaleDateString("es-ES", { year: 'numeric', month: 'long', day: 'numeric' }));
@@ -310,7 +352,6 @@ export default function CleanQuoteApp() {
     setIsAnalyzing(true);
 
     try {
-      // Todas las fotos se analizan en paralelo con el mismo endpoint
       const settled = await Promise.allSettled(files.map((file) => analyzeOnePhoto(file)));
       const results = settled
         .filter((r): r is PromiseFulfilledResult<any> => r.status === "fulfilled")
@@ -326,7 +367,6 @@ export default function CleanQuoteApp() {
         trafficLevel: merged.trafficLevel || form.trafficLevel,
         disinfectionLevel: merged.disinfectionLevel || form.disinfectionLevel,
       });
-      // Si se detectaron más pisos, quedan listos para que el usuario indique los m² de cada uno
       setExtraFloors(merged.floors.slice(1).map((m) => ({ floorMaterial: m, areaM2: "" as const })));
       setStep(2);
     } catch (error) {
@@ -347,7 +387,8 @@ export default function CleanQuoteApp() {
         areaM2: Number(areaM2) || 0,
         bathroomsCount: bathroomsCount !== "" ? Number(bathroomsCount) : undefined,
         windowsM2: windowsM2 !== "" ? Number(windowsM2) : undefined,
-        // Pisos mixtos: el piso principal + los adicionales, cada uno con sus m²
+        serviceDate: serviceDate ? serviceDate.toISOString() : null,
+        serviceEndDate: serviceEndDate ? serviceEndDate.toISOString() : null, // ← NUEVO v2
         ...(extraFloors.length > 0 && !floorError
           ? {
               floorZones: [
@@ -356,7 +397,6 @@ export default function CleanQuoteApp() {
               ],
             }
           : {}),
-        // Solo se envían químicos válidos para el tipo de establecimiento actual
         specialChemicals: needsChemical
           ? selectedChemicals.filter((id) => availableChemicals.some((c) => c.id === id))
           : [],
@@ -371,7 +411,7 @@ export default function CleanQuoteApp() {
 
       if (res.ok) {
         const data = await res.json();
-        setQuoteResult(data); 
+        setQuoteResult(data);
         setStep(3);
       }
     } catch (error) {
@@ -382,12 +422,10 @@ export default function CleanQuoteApp() {
     }
   };
 
-  // Químicos disponibles según el tipo de establecimiento actual
   const availableChemicals = getChemicalsForFacility(form.facilityType);
   const toggleChemical = (id: string) =>
     setSelectedChemicals((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
 
-  // Pisos adicionales: el piso principal (el del selector) ocupa el área que queda libre
   const usedFloors = [form.floorMaterial, ...extraFloors.map((f) => f.floorMaterial)];
   const extrasTotal = extraFloors.reduce((a, f) => a + (Number(f.areaM2) || 0), 0);
   const primaryFloorArea = (Number(areaM2) || 0) - extrasTotal;
@@ -409,8 +447,6 @@ export default function CleanQuoteApp() {
     setExtraFloors((prev) => prev.map((f, i) => (i === idx ? { ...f, ...patch } : f)));
   const removeExtraFloor = (idx: number) => setExtraFloors((prev) => prev.filter((_, i) => i !== idx));
 
-  // Sugerencia de químico: por ahora NO se guarda en ningún lugar (solo confirma al usuario).
-  // Más adelante aquí se puede hacer un fetch("/api/suggestions", ...) para almacenarla.
   const submitSuggestion = () => {
     if (!suggestionText.trim()) return;
     setSuggestionText("");
@@ -424,6 +460,8 @@ export default function CleanQuoteApp() {
     setNeedsChemical(false); setSelectedChemicals([]);
     setExtraFloors([]); setImagePreviews([]);
     setShowSuggestion(false); setSuggestionText(""); setSuggestionSent(false);
+    setServiceDate(undefined);
+    setServiceEndDate(undefined); // ← NUEVO v2
     setForm({
       facilityType: "OFFICE", floorMaterial: "TILE", riskLevel: "LOW",
       trafficLevel: "MEDIUM", disinfectionLevel: "CONTINUOUS_BASIC", frequencyType: "MONTHLY_DAILY",
@@ -433,12 +471,8 @@ export default function CleanQuoteApp() {
 
   return (
     <>
-      {/* ============================================================== */}
-      {/* VISTA DE APLICACIÓN (SE OCULTA TOTALMENTE AL IMPRIMIR)         */}
-      {/* ============================================================== */}
       <div className="print:hidden min-h-screen bg-[#F8F7F4] text-stone-800 pb-16">
-        
-        {/* HEADER LIMPIO TIPO DASHBOARD */}
+
         <header className="bg-white border-b border-stone-200 p-4">
           <div className="max-w-6xl mx-auto flex justify-between items-center">
             <div className="flex items-center gap-3">
@@ -457,7 +491,7 @@ export default function CleanQuoteApp() {
         </header>
 
         <main className="max-w-6xl mx-auto px-4 mt-8">
-          
+
           {step === 1 && (
             <div className="max-w-3xl mx-auto">
               <div className="mb-6">
@@ -480,14 +514,14 @@ export default function CleanQuoteApp() {
                     Reconocimiento Óptico
                   </span>
                 </div>
-                
+
                 <div className="border-2 border-dashed border-stone-200 bg-stone-50/50 rounded-xl p-10 flex flex-col items-center justify-center mb-6">
                   <div className="bg-white p-3 rounded-xl shadow-sm border border-stone-100 mb-4">
                     <UploadCloud className="w-6 h-6 text-stone-400" />
                   </div>
                   <p className="font-semibold text-stone-700 mb-1">Arrastra o <span className="text-[#C25E17] underline">selecciona una imagen</span> del inmueble</p>
                   <p className="text-xs text-stone-400 mb-6 max-w-sm">La IA detecta automáticamente los m², tipología de pavimento y nivel de suciedad inicial.</p>
-                  
+
                   <label className="bg-stone-900 hover:bg-stone-800 text-white px-6 py-3 rounded-xl cursor-pointer flex items-center justify-center gap-2 transition text-sm font-bold w-full max-w-xs shadow-md">
                     {isAnalyzing ? <Loader2 className="w-4 h-4 animate-spin" /> : <UploadCloud className="w-4 h-4" />}
                     {isAnalyzing ? "Procesando..." : "Subir Fotos del Lugar (hasta 4)"}
@@ -504,8 +538,7 @@ export default function CleanQuoteApp() {
 
           {step === 2 && (
             <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 animate-in fade-in duration-500">
-              
-              {/* COLUMNA IZQUIERDA: INPUTS */}
+
               <div className="lg:col-span-7 space-y-6">
                 <div className="mb-2">
                   <h2 className="text-2xl font-bold text-stone-900 mb-1">Configuración del Servicio</h2>
@@ -535,7 +568,6 @@ export default function CleanQuoteApp() {
                   </div>
                 )}
 
-                {/* Asistente de Voz */}
                 <div className="bg-white p-6 rounded-2xl shadow-sm border border-stone-200">
                   <div className="flex justify-between items-center mb-6">
                     <h2 className="font-bold text-sm flex items-center gap-2 text-stone-900">
@@ -545,18 +577,18 @@ export default function CleanQuoteApp() {
                       <span className="w-1.5 h-1.5 rounded-full bg-emerald-500"></span> Listo
                     </span>
                   </div>
-                  
+
                   <div className="flex flex-wrap gap-2 mb-4 text-xs">
                     <span className="bg-stone-50 text-stone-500 border border-stone-200 px-3 py-1.5 rounded-lg">"Oficina de 250 m² con 3 baños"</span>
                     <span className="bg-stone-50 text-stone-500 border border-stone-200 px-3 py-1.5 rounded-lg">"Bodega industrial 500 m² piso epóxico"</span>
                   </div>
 
-                  <textarea 
-                    value={transcript} 
-                    onChange={(e) => { setTranscript(e.target.value); finalTranscriptRef.current = e.target.value.trim(); }} 
-                    rows={2} 
-                    placeholder="Lo que dictes aparecerá aquí. También puedes escribir libremente..." 
-                    className="w-full rounded-xl border border-stone-200 bg-white p-4 text-sm focus:outline-none focus:ring-2 focus:ring-[#C25E17]/20 focus:border-[#C25E17] resize-none mb-4" 
+                  <textarea
+                    value={transcript}
+                    onChange={(e) => { setTranscript(e.target.value); finalTranscriptRef.current = e.target.value.trim(); }}
+                    rows={2}
+                    placeholder="Lo que dictes aparecerá aquí. También puedes escribir libremente..."
+                    className="w-full rounded-xl border border-stone-200 bg-white p-4 text-sm focus:outline-none focus:ring-2 focus:ring-[#C25E17]/20 focus:border-[#C25E17] resize-none mb-4"
                   />
 
                   {applyMsg && (
@@ -573,7 +605,6 @@ export default function CleanQuoteApp() {
                   </div>
                 </div>
 
-                {/* Formulario Manual */}
                 <div className="bg-white rounded-2xl shadow-sm border border-stone-200">
                   <div className="p-6 border-b border-stone-100 flex justify-between items-center">
                     <div>
@@ -619,7 +650,6 @@ export default function CleanQuoteApp() {
                       </div>
                     </div>
 
-                    {/* Pisos adicionales (pisos mixtos) */}
                     <div>
                       {extraFloors.length === 0 ? (
                         <button type="button" onClick={addExtraFloor} className="text-xs font-semibold text-[#C25E17] hover:underline">
@@ -691,7 +721,6 @@ export default function CleanQuoteApp() {
                       )}
                     </div>
 
-                    {/* Químico especial */}
                     <div className="pt-2">
                       <label className="flex items-start gap-3 p-3 border border-stone-200 rounded-lg bg-stone-50 hover:bg-stone-100 transition cursor-pointer">
                         <input
@@ -731,7 +760,6 @@ export default function CleanQuoteApp() {
                             </label>
                           ))}
 
-                          {/* ¿No encontraste el químico? */}
                           <div className="pt-2 border-t border-stone-200 mt-3">
                             {!showSuggestion && !suggestionSent && (
                               <button
@@ -800,7 +828,7 @@ export default function CleanQuoteApp() {
                         <span className="text-xs font-bold text-stone-700 flex items-center gap-2"><Settings2 className="w-3.5 h-3.5"/> Opciones Avanzadas, Riesgos y Factores</span>
                         {showAdvanced ? <ChevronUp className="w-4 h-4 text-stone-400"/> : <ChevronDown className="w-4 h-4 text-stone-400"/>}
                       </button>
-                      
+
                       {showAdvanced && (
                         <div className="grid grid-cols-2 gap-4 mt-4 p-4 bg-stone-50 border border-stone-200 rounded-xl">
                           <div>
@@ -821,22 +849,22 @@ export default function CleanQuoteApp() {
                           </div>
                           <div>
                             <label className="block text-[11px] font-bold text-stone-500 mb-1">Unidades Sanitarias (Baños)</label>
-                            <input 
-                              type="number" 
-                              placeholder="Auto-calculado" 
-                              value={bathroomsCount} 
-                              onChange={(e) => setBathroomsCount(e.target.value ? Number(e.target.value) : "")} 
-                              className="w-full border border-stone-200 rounded-md p-2 text-xs outline-none" 
+                            <input
+                              type="number"
+                              placeholder="Auto-calculado"
+                              value={bathroomsCount}
+                              onChange={(e) => setBathroomsCount(e.target.value ? Number(e.target.value) : "")}
+                              className="w-full border border-stone-200 rounded-md p-2 text-xs outline-none"
                             />
                           </div>
                           <div>
                             <label className="block text-[11px] font-bold text-stone-500 mb-1">Superficie Vidriada (m²)</label>
-                            <input 
-                              type="number" 
-                              placeholder="Ej. 15" 
-                              value={windowsM2} 
-                              onChange={(e) => setWindowsM2(e.target.value ? Number(e.target.value) : "")} 
-                              className="w-full border border-stone-200 rounded-md p-2 text-xs outline-none" 
+                            <input
+                              type="number"
+                              placeholder="Ej. 15"
+                              value={windowsM2}
+                              onChange={(e) => setWindowsM2(e.target.value ? Number(e.target.value) : "")}
+                              className="w-full border border-stone-200 rounded-md p-2 text-xs outline-none"
                             />
                           </div>
                         </div>
@@ -846,9 +874,8 @@ export default function CleanQuoteApp() {
                 </div>
               </div>
 
-              {/* COLUMNA DERECHA: CLIENTE Y ACCIÓN */}
               <div className="lg:col-span-5 space-y-6">
-                
+
                 <div className="bg-white p-6 rounded-2xl shadow-sm border border-stone-200">
                   <div className="mb-6">
                     <h2 className="font-bold text-sm text-stone-900 mb-1">Datos del Cliente (Contrato)</h2>
@@ -863,10 +890,38 @@ export default function CleanQuoteApp() {
                       <label className="block text-[11px] font-bold uppercase tracking-wider text-stone-500 mb-1.5">Dirección / Sede</label>
                       <input type="text" value={facilityName} onChange={(e) => setFacilityName(e.target.value)} placeholder="Ej. Av. Amazonas y Naciones Unidas" className="w-full border border-stone-200 rounded-lg p-2.5 text-sm outline-none focus:border-[#C25E17]" />
                     </div>
+
+                    {/* ← NUEVO v2: rango de fechas */}
+                    <div className="grid grid-cols-2 gap-4">
+                      <div>
+                        <label className="block text-[11px] font-bold uppercase tracking-wider text-stone-500 mb-1.5">Inicio del Servicio</label>
+                        <DatePicker date={serviceDate} setDate={setServiceDate} placeholder="Inicio" accent="orange" />
+                      </div>
+                      <div>
+                        <label className="block text-[11px] font-bold uppercase tracking-wider text-stone-500 mb-1.5">
+                          Fin <span className="text-stone-400 normal-case font-medium">(opcional)</span>
+                        </label>
+                        <DatePicker
+                          date={serviceEndDate}
+                          setDate={setServiceEndDate}
+                          placeholder="Fin"
+                          accent="orange"
+                          disabled={serviceDate ? { before: serviceDate } : undefined}
+                        />
+                      </div>
+                    </div>
+
+                    {dateError && (
+                      <p className="text-[11px] font-medium text-red-600">{dateError}</p>
+                    )}
                   </div>
                 </div>
 
-                <button onClick={() => setShowConfirmModal(true)} disabled={isGenerating || !!floorError} className="w-full bg-[#C25E17] hover:bg-[#a64f12] text-white font-bold py-4 rounded-xl flex justify-center items-center gap-2 shadow-lg shadow-orange-900/10 text-base transition disabled:opacity-70">
+                <button
+                  onClick={() => setShowConfirmModal(true)}
+                  disabled={isGenerating || !!floorError || !!dateError}
+                  className="w-full bg-[#C25E17] hover:bg-[#a64f12] text-white font-bold py-4 rounded-xl flex justify-center items-center gap-2 shadow-lg shadow-orange-900/10 text-base transition disabled:opacity-70"
+                >
                   {isGenerating ? <Loader2 className="w-5 h-5 animate-spin"/> : <Calculator className="w-5 h-5"/>}
                   {isGenerating ? "Procesando..." : "Calcular Cotización Exacta"}
                 </button>
@@ -875,7 +930,6 @@ export default function CleanQuoteApp() {
             </div>
           )}
 
-          {/* Modal de Confirmación */}
           {showConfirmModal && (
             <div className="fixed inset-0 bg-stone-900/50 backdrop-blur-sm flex items-center justify-center z-50 p-4 animate-in fade-in duration-200">
               <div className="bg-white rounded-2xl shadow-2xl max-w-sm w-full p-6 text-center border border-stone-200">
@@ -894,7 +948,7 @@ export default function CleanQuoteApp() {
 
           {step === 3 && quoteResult && (
             <div className="max-w-4xl mx-auto space-y-6 animate-in fade-in slide-in-from-bottom-8 duration-700">
-              
+
               <div className="bg-white rounded-3xl shadow-lg border border-stone-200 overflow-hidden">
                 <div className="p-8 border-b border-stone-100 flex justify-between items-center bg-white">
                   <div>
@@ -928,7 +982,7 @@ export default function CleanQuoteApp() {
                     <span>Concepto Técnico / Desglose</span>
                     <span>Subtotal</span>
                   </div>
-                  
+
                   <div className="space-y-4">
                     {quoteResult.lineItems?.map((item: any, idx: number) => {
                       const isDiscount = item.amountUsd < 0;
@@ -967,29 +1021,25 @@ export default function CleanQuoteApp() {
             </div>
           )}
 
-          {/* FOOTER APLICACIÓN */}
           <div className="max-w-6xl mx-auto mt-12 pt-6 border-t border-stone-200 flex flex-col sm:flex-row justify-between items-center text-[10px] text-stone-400 font-medium">
             <p>© 2026 CleanxCost Studio Pro B2B. Módulo de cálculo volumétrico y bioseguridad.</p>
             <div className="flex gap-4 mt-2 sm:mt-0">
-              <a href="#" className="hover:text-stone-600">Algoritmo de Rendimientos</a> • 
-              <a href="#" className="hover:text-stone-600">Tablas Salariales</a> • 
+              <a href="#" className="hover:text-stone-600">Algoritmo de Rendimientos</a> •
+              <a href="#" className="hover:text-stone-600">Tablas Salariales</a> •
               <a href="#" className="hover:text-stone-600">Soporte Operacional</a>
             </div>
           </div>
         </main>
       </div>
 
-      {/* ============================================================== */}
-      {/* VISTA DE IMPRESIÓN (PDF) - Solo visible al presionar Imprimir  */}
-      {/* ============================================================== */}
       {step === 3 && quoteResult && (
         <div className="hidden print:block w-full bg-white text-black text-sm p-10 font-sans mx-auto max-w-[21cm]">
-          
+
           <div className="mb-8">
             <h1 className="text-xl font-bold text-center mb-8 border-b-2 border-black pb-4 uppercase">
               Contrato de Prestación de Servicios de Limpieza
             </h1>
-            
+
             <div className="grid grid-cols-2 gap-8 mb-8 text-sm">
               <div className="p-4 border border-stone-300 rounded">
                 <h3 className="font-bold mb-2 underline">EMPRESA PRESTADORA</h3>
@@ -1011,7 +1061,11 @@ export default function CleanQuoteApp() {
             <div className="space-y-4 text-justify">
               <p><strong>PRIMERA. OBJETO:</strong> La prestadora realizará servicios de limpieza en el inmueble ubicado en <strong>{facilityName || "la dirección detallada en la sección del Cliente"}</strong>. El alcance, la frecuencia y los precios constan en la cotización de la segunda página, que forma parte íntegra del contrato.</p>
               <p><strong>SEGUNDA. ALCANCE:</strong> El servicio podrá incluir limpieza de pisos y superficies, baños, cocina, áreas comunes y retiro de residuos, según lo aceptado en la cotización. Las tareas extraordinarias o no incluidas deberán aprobarse por escrito y podrán tener un costo adicional.</p>
-              <p><strong>TERCERA. PLAZO Y HORARIO:</strong> El servicio iniciará el día __ de ____________ de 20__. Frecuencia asignada: <strong>{form.frequencyType === "SPOT" ? "Única vez" : form.frequencyType === "WEEKLY" ? "Semanal" : "Mensual / Diaria"}</strong>. Cualquier cambio deberá ser aceptado por ambas partes.</p>
+              <p>
+                <strong>TERCERA. PLAZO Y HORARIO:</strong>{" "}
+                {/* ← CAMBIO v2: cláusula adaptativa */}
+                {getPlazoContrato(serviceDate, serviceEndDate, form.frequencyType)}
+              </p>
               <p><strong>CUARTA. PRECIO Y PAGO:</strong> El cliente pagará el valor mensual o total aprobado en la cotización mediante transferencia bancaria. Los comprobantes e impuestos aplicables se manejarán conforme a la normativa vigente.</p>
               <p><strong>QUINTA. OBLIGACIONES DE LA PRESTADORA:</strong> Realizar las tareas acordadas con diligencia, asignar personal apropiado, utilizar los insumos y equipos acordados, respetar las normas de seguridad y comunicar incidencias relevantes.</p>
               <p><strong>SEXTA. OBLIGACIONES DEL CLIENTE:</strong> Facilitar el acceso al lugar, informar sobre riesgos o áreas restringidas, disponer de los servicios básicos necesarios y pagar en los plazos pactados.</p>
@@ -1019,7 +1073,7 @@ export default function CleanQuoteApp() {
               <p><strong>OCTAVA. TERMINACIÓN:</strong> Cualquiera de las partes podrá terminar el contrato mediante aviso escrito con 30 días de anticipación. Se pagarán los servicios ya prestados y los gastos previamente autorizados.</p>
               <p><strong>DÉCIMA. ACEPTACIÓN:</strong> Las partes declaran haber leído y aceptado este contrato y su cotización. Toda modificación deberá constar por escrito y contar con la aceptación de ambas partes.</p>
             </div>
-            
+
             <div className="mt-8 text-right text-xs text-stone-500">Página 1</div>
           </div>
 
