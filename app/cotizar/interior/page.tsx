@@ -3,6 +3,51 @@
 import React, { useState, useEffect, useRef } from "react";
 import { Building2, Sparkles, Calculator, Save, UploadCloud, Loader2, Settings2, ChevronDown, ChevronUp, Image as ImageIcon, Mic, CheckCircle, RefreshCcw, ArrowRight, Download } from "lucide-react";
 import { getChemicalsForFacility, BASIS_LABEL } from "@/lib/pricing/chemicals";
+import { DatePicker } from "@/components/DatePicker";
+
+// ============================================================================
+// HELPER: redacta la cláusula TERCERA según la frecuencia y las fechas
+// ============================================================================
+function getPlazoContrato(
+  serviceDate: Date | undefined,
+  serviceEndDate: Date | undefined,
+  frequencyType: string
+): React.ReactNode {
+  const fmt = (d: Date) =>
+    d.toLocaleDateString("es-ES", { day: "2-digit", month: "long", year: "numeric" });
+
+  const start = serviceDate ? fmt(serviceDate) : "__ de ____________ de 20__";
+  const end = serviceEndDate ? fmt(serviceEndDate) : null;
+
+  if (frequencyType === "SPOT") {
+    return (
+      <>
+        El servicio se ejecutará{" "}
+        {end ? (
+          <>desde el <strong>{start}</strong> hasta el <strong>{end}</strong></>
+        ) : (
+          <>el día <strong>{start}</strong></>
+        )}
+        . Al ser un servicio puntual, no genera renovación automática.
+      </>
+    );
+  }
+
+  return (
+    <>
+      El servicio iniciará el <strong>{start}</strong> y{" "}
+      {end ? (
+        <>tendrá vigencia hasta el <strong>{end}</strong></>
+      ) : (
+        <>se mantendrá vigente <strong>hasta nuevo aviso por escrito</strong></>
+      )}
+      . Frecuencia asignada:{" "}
+      <strong>{frequencyType === "WEEKLY" ? "Semanal" : "Mensual / Diaria"}</strong>.
+      Cualquier cambio deberá ser aceptado por ambas partes.
+    </>
+  );
+}
+
 
 // ============================================================================
 // 1. MOTOR DE PARSEO DE VOZ
@@ -189,6 +234,8 @@ export default function CleanQuoteApp() {
   const [showConfirmModal, setShowConfirmModal] = useState(false);
   const [showManualForm, setShowManualForm] = useState(false);
   const [todayDate, setTodayDate] = useState("");
+  const [serviceDate, setServiceDate] = useState<Date | undefined>(undefined);
+  const [serviceEndDate, setServiceEndDate] = useState<Date | undefined>(undefined);
 
   const [clientName, setClientName] = useState("");
   const [facilityName, setFacilityName] = useState("");
@@ -345,6 +392,8 @@ export default function CleanQuoteApp() {
         clientName: clientName || "Cliente Demo",
         facilityName: facilityName || "Instalación",
         areaM2: Number(areaM2) || 0,
+        serviceDate: serviceDate ? serviceDate.toISOString() : null,
+        serviceEndDate: serviceEndDate ? serviceEndDate.toISOString() : null,
         bathroomsCount: bathroomsCount !== "" ? Number(bathroomsCount) : undefined,
         windowsM2: windowsM2 !== "" ? Number(windowsM2) : undefined,
         // Pisos mixtos: el piso principal + los adicionales, cada uno con sus m²
@@ -417,7 +466,16 @@ export default function CleanQuoteApp() {
     setSuggestionSent(true);
   };
 
+  // Validación de fechas del contrato
+  const dateError =
+    serviceEndDate && !serviceDate
+      ? "Indica la fecha de inicio antes que la fecha de fin."
+      : serviceDate && serviceEndDate && serviceEndDate < serviceDate
+      ? "La fecha de fin no puede ser anterior a la fecha de inicio."
+      : null;
+
   const startNewQuote = () => {
+    setServiceDate(undefined); setServiceEndDate(undefined);
     setAreaM2(""); setBathroomsCount(""); setWindowsM2(""); setClientName(""); setFacilityName("");
     setImagePreview(null); setTranscript(""); setApplyMsg(null); setQuoteResult(null);
     setShowManualForm(false); setShowAdvanced(false);
@@ -863,10 +921,34 @@ export default function CleanQuoteApp() {
                       <label className="block text-[11px] font-bold uppercase tracking-wider text-stone-500 mb-1.5">Dirección / Sede</label>
                       <input type="text" value={facilityName} onChange={(e) => setFacilityName(e.target.value)} placeholder="Ej. Av. Amazonas y Naciones Unidas" className="w-full border border-stone-200 rounded-lg p-2.5 text-sm outline-none focus:border-[#C25E17]" />
                     </div>
+
+                    {/* Rango de fechas del servicio */}
+                    <div className="grid grid-cols-2 gap-4">
+                      <div>
+                        <label className="block text-[11px] font-bold uppercase tracking-wider text-stone-500 mb-1.5">Inicio del Servicio</label>
+                        <DatePicker date={serviceDate} setDate={setServiceDate} placeholder="Inicio" accent="orange" />
+                      </div>
+                      <div>
+                        <label className="block text-[11px] font-bold uppercase tracking-wider text-stone-500 mb-1.5">
+                          Fin <span className="text-stone-400 normal-case font-medium">(opcional)</span>
+                        </label>
+                        <DatePicker
+                          date={serviceEndDate}
+                          setDate={setServiceEndDate}
+                          placeholder="Fin"
+                          accent="orange"
+                          disabled={serviceDate ? { before: serviceDate } : undefined}
+                        />
+                      </div>
+                    </div>
+
+                    {dateError && (
+                      <p className="text-[11px] font-medium text-red-600">{dateError}</p>
+                    )}
                   </div>
                 </div>
 
-                <button onClick={() => setShowConfirmModal(true)} disabled={isGenerating || !!floorError} className="w-full bg-[#C25E17] hover:bg-[#a64f12] text-white font-bold py-4 rounded-xl flex justify-center items-center gap-2 shadow-lg shadow-orange-900/10 text-base transition disabled:opacity-70">
+                <button onClick={() => setShowConfirmModal(true)} disabled={isGenerating || !!floorError || !!dateError} className="w-full bg-[#C25E17] hover:bg-[#a64f12] text-white font-bold py-4 rounded-xl flex justify-center items-center gap-2 shadow-lg shadow-orange-900/10 text-base transition disabled:opacity-70">
                   {isGenerating ? <Loader2 className="w-5 h-5 animate-spin"/> : <Calculator className="w-5 h-5"/>}
                   {isGenerating ? "Procesando..." : "Calcular Cotización Exacta"}
                 </button>
@@ -1011,7 +1093,10 @@ export default function CleanQuoteApp() {
             <div className="space-y-4 text-justify">
               <p><strong>PRIMERA. OBJETO:</strong> La prestadora realizará servicios de limpieza en el inmueble ubicado en <strong>{facilityName || "la dirección detallada en la sección del Cliente"}</strong>. El alcance, la frecuencia y los precios constan en la cotización de la segunda página, que forma parte íntegra del contrato.</p>
               <p><strong>SEGUNDA. ALCANCE:</strong> El servicio podrá incluir limpieza de pisos y superficies, baños, cocina, áreas comunes y retiro de residuos, según lo aceptado en la cotización. Las tareas extraordinarias o no incluidas deberán aprobarse por escrito y podrán tener un costo adicional.</p>
-              <p><strong>TERCERA. PLAZO Y HORARIO:</strong> El servicio iniciará el día __ de ____________ de 20__. Frecuencia asignada: <strong>{form.frequencyType === "SPOT" ? "Única vez" : form.frequencyType === "WEEKLY" ? "Semanal" : "Mensual / Diaria"}</strong>. Cualquier cambio deberá ser aceptado por ambas partes.</p>
+              <p>
+                <strong>TERCERA. PLAZO Y HORARIO:</strong>{" "}
+                {getPlazoContrato(serviceDate, serviceEndDate, form.frequencyType)}
+              </p>
               <p><strong>CUARTA. PRECIO Y PAGO:</strong> El cliente pagará el valor mensual o total aprobado en la cotización mediante transferencia bancaria. Los comprobantes e impuestos aplicables se manejarán conforme a la normativa vigente.</p>
               <p><strong>QUINTA. OBLIGACIONES DE LA PRESTADORA:</strong> Realizar las tareas acordadas con diligencia, asignar personal apropiado, utilizar los insumos y equipos acordados, respetar las normas de seguridad y comunicar incidencias relevantes.</p>
               <p><strong>SEXTA. OBLIGACIONES DEL CLIENTE:</strong> Facilitar el acceso al lugar, informar sobre riesgos o áreas restringidas, disponer de los servicios básicos necesarios y pagar en los plazos pactados.</p>
