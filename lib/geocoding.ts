@@ -151,30 +151,86 @@ const accentInsensitive = (s: string) =>
     .replace(/u/gi, "[uúùüUÚ]")
     .replace(/n/gi, "[nñNÑ]");
 
+// Servidores de Overpass: si uno falla (red, bloqueo, saturación) se prueba el siguiente
+const OVERPASS_ENDPOINTS = [
+  "https://overpass-api.de/api/interpreter",
+  "https://overpass.kumi.systems/api/interpreter",
+  "https://overpass.private.coffee/api/interpreter",
+];
+
+async function overpassQuery(q: string) {
+  for (const url of OVERPASS_ENDPOINTS) {
+    try {
+      const res = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: "data=" + encodeURIComponent(q),
+        signal: AbortSignal.timeout(15000),
+      });
+      if (!res.ok) {
+        console.warn(`⚠️ Overpass ${new URL(url).host} respondió HTTP ${res.status}`);
+        continue;
+      }
+      return await res.json();
+    } catch (e: any) {
+      const cause = e?.cause?.code || e?.cause?.message || e?.name || String(e);
+      console.warn(`⚠️ Overpass ${new URL(url).host} falló: ${cause}`);
+    }
+  }
+  return null;
+}
+
 // Punto exacto donde se cruzan dos calles (OpenStreetMap / Overpass)
 async function findIntersection(street1: string, street2: string) {
+  const q = `[out:json][timeout:20];
+    way["highway"]["name"~"${accentInsensitive(street1)}",i](${QUITO_BBOX})->.a;
+    way["highway"]["name"~"${accentInsensitive(street2)}",i](${QUITO_BBOX})->.b;
+    node(w.a)(w.b);
+    out 1;`;
+  const data = await overpassQuery(q);
+  const node = data?.elements?.[0];
+  if (data && !node) console.log(`[INFO] Overpass no encontró cruce entre "${street1}" y "${street2}"`);
+  return node ? { lat: node.lat as number, lon: node.lon as number } : null;
+}
+
+// Punto de la calle 1 a menos de 200 m de la calle 2 (cuando no comparten nodo)
+async function findNear(street1: string, street2: string) {
+  const q = `[out:json][timeout:20];
+    way["highway"]["name"~"${accentInsensitive(street1)}",i](${QUITO_BBOX})->.a;
+    way["highway"]["name"~"${accentInsensitive(street2)}",i](${QUITO_BBOX})->.b;
+    node(w.a)(around.b:200);
+    out 1;`;
+  const data = await overpassQuery(q);
+  const node = data?.elements?.[0];
+  return node ? { lat: node.lat as number, lon: node.lon as number } : null;
+}
+
+// Geocodificador de Esri: entiende esquinas ("calle & calle").
+// Nota: el servicio gratuito es para búsquedas; guardar resultados a largo plazo
+// requiere cuenta/licencia de ArcGIS. Aceptable para una demo o hackathon.
+async function esriIntersection(street1: string, street2: string) {
   try {
-    const q = `[out:json][timeout:20];
-      way["highway"]["name"~"${accentInsensitive(street1)}",i](${QUITO_BBOX})->.a;
-      way["highway"]["name"~"${accentInsensitive(street2)}",i](${QUITO_BBOX})->.b;
-      node(w.a)(w.b);
-      out 1;`;
-    const res = await fetch("https://overpass-api.de/api/interpreter", {
-      method: "POST",
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      body: "data=" + encodeURIComponent(q),
-      signal: AbortSignal.timeout(20000),
-    });
+    const url =
+      "https://geocode.arcgis.com/arcgis/rest/services/World/GeocodeServer/findAddressCandidates" +
+      `?f=json&maxLocations=1&countryCode=ECU&outFields=Match_addr` +
+      `&location=-78.4678,-0.1806` +
+      `&singleLine=${encodeURIComponent(`${street1} & ${street2}, Quito, Ecuador`)}`;
+    const res = await fetch(url, { signal: AbortSignal.timeout(10000) });
     if (!res.ok) {
-      console.warn(`⚠️ Overpass respondió HTTP ${res.status}`);
+      console.warn(`⚠️ Esri respondió HTTP ${res.status}`);
       return null;
     }
     const data = await res.json();
-    const node = data?.elements?.[0];
-    if (!node) console.log(`[INFO] Overpass no encontró cruce entre "${street1}" y "${street2}"`);
-    return node ? { lat: node.lat as number, lon: node.lon as number } : null;
-  } catch (e) {
-    console.warn("⚠️ Overpass falló:", String(e).slice(0, 200));
+    const c = data?.candidates?.[0];
+    if (!c || c.score < 85) return null;
+    const lat = c.location.y as number;
+    const lon = c.location.x as number;
+    // Validar que caiga dentro de Quito
+    if (lat < -0.35 || lat > -0.05 || lon < -78.58 || lon > -78.38) return null;
+    return { lat, lon };
+  } catch (e: any) {
+    const cause = e?.cause?.code || e?.cause?.message || e?.name || String(e);
+    console.warn(`⚠️ Esri falló: ${cause}`);
     return null;
   }
 }
@@ -219,7 +275,15 @@ export async function geocodeAddress(rawAddress: string): Promise<{ lat: number;
     // 2) Esquina exacta (calle + calle)
     if (parsed.street1 && parsed.street2) {
       hit = await findIntersection(parsed.street1, parsed.street2);
-      if (hit) console.log("[EXITO] Esquina encontrada en OpenStreetMap");
+      if (hit) console.log("[EXITO] Esquina exacta encontrada en OpenStreetMap");
+      if (!hit) {
+        hit = await findNear(parsed.street1, parsed.street2);
+        if (hit) console.log("[EXITO] Punto de la calle 1 a menos de 200 m de la calle 2");
+      }
+      if (!hit) {
+        hit = await esriIntersection(parsed.street1, parsed.street2);
+        if (hit) console.log("[EXITO] Esquina encontrada con Esri");
+      }
     }
 
     // 3) Lugar conocido
@@ -239,7 +303,11 @@ export async function geocodeAddress(rawAddress: string): Promise<{ lat: number;
       if (hit) console.log(`[EXITO] Calle encontrada: ${parsed.street2} (aprox.)`);
     }
 
-    if (hit) return hit;
+    if (hit) {
+      console.log(`[GEOCODING] Coordenadas: ${hit.lat}, ${hit.lon}`);
+      console.log(`[GEOCODING] Verifícalas aquí: https://www.openstreetmap.org/?mlat=${hit.lat}&mlon=${hit.lon}#map=17/${hit.lat}/${hit.lon}`);
+      return hit;
+    }
     console.log(`[FALLO] El mapa no encontró: ${rawAddress}`);
   } catch (error) {
     console.error("Error general en geocodificación:", error);
