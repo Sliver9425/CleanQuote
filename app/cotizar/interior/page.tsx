@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect, useRef } from "react";
 import { Building2, Sparkles, Calculator, Save, UploadCloud, Loader2, Settings2, ChevronDown, ChevronUp, Image as ImageIcon, Mic, CheckCircle, RefreshCcw, ArrowRight, Download } from "lucide-react";
+import { getChemicalsForFacility, BASIS_LABEL } from "@/lib/pricing/chemicals";
 
 // ============================================================================
 // 1. MOTOR DE PARSEO DE VOZ
@@ -132,6 +133,11 @@ export default function CleanQuoteApp() {
   const [quoteResult, setQuoteResult] = useState<any>(null);
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [imagePreview, setImagePreview] = useState<string | null>(null);
+  const [needsChemical, setNeedsChemical] = useState(false);
+  const [selectedChemicals, setSelectedChemicals] = useState<string[]>([]);
+  const [showSuggestion, setShowSuggestion] = useState(false);
+  const [suggestionText, setSuggestionText] = useState("");
+  const [suggestionSent, setSuggestionSent] = useState(false);
 
   const [form, setForm] = useState({
     facilityType: "OFFICE",
@@ -268,6 +274,10 @@ export default function CleanQuoteApp() {
         areaM2: Number(areaM2) || 0,
         bathroomsCount: bathroomsCount !== "" ? Number(bathroomsCount) : undefined,
         windowsM2: windowsM2 !== "" ? Number(windowsM2) : undefined,
+        // Solo se envían químicos válidos para el tipo de establecimiento actual
+        specialChemicals: needsChemical
+          ? selectedChemicals.filter((id) => availableChemicals.some((c) => c.id === id))
+          : [],
         ...form
       };
 
@@ -290,10 +300,25 @@ export default function CleanQuoteApp() {
     }
   };
 
+  // Químicos disponibles según el tipo de establecimiento actual
+  const availableChemicals = getChemicalsForFacility(form.facilityType);
+  const toggleChemical = (id: string) =>
+    setSelectedChemicals((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
+
+  // Sugerencia de químico: por ahora NO se guarda en ningún lugar (solo confirma al usuario).
+  // Más adelante aquí se puede hacer un fetch("/api/suggestions", ...) para almacenarla.
+  const submitSuggestion = () => {
+    if (!suggestionText.trim()) return;
+    setSuggestionText("");
+    setSuggestionSent(true);
+  };
+
   const startNewQuote = () => {
     setAreaM2(""); setBathroomsCount(""); setWindowsM2(""); setClientName(""); setFacilityName("");
     setImagePreview(null); setTranscript(""); setApplyMsg(null); setQuoteResult(null);
     setShowManualForm(false); setShowAdvanced(false);
+    setNeedsChemical(false); setSelectedChemicals([]);
+    setShowSuggestion(false); setSuggestionText(""); setSuggestionSent(false);
     setForm({
       facilityType: "OFFICE", floorMaterial: "TILE", riskLevel: "LOW",
       trafficLevel: "MEDIUM", disinfectionLevel: "CONTINUOUS_BASIC", frequencyType: "MONTHLY_DAILY",
@@ -480,6 +505,110 @@ export default function CleanQuoteApp() {
                           <option value="MONTHLY_DAILY">Diario L-V (Mensual Recurrente)</option>
                         </select>
                       </div>
+                    </div>
+
+                    {/* Químico especial */}
+                    <div className="pt-2">
+                      <label className="flex items-start gap-3 p-3 border border-stone-200 rounded-lg bg-stone-50 hover:bg-stone-100 transition cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={needsChemical}
+                          onChange={(e) => setNeedsChemical(e.target.checked)}
+                          className="mt-0.5 accent-[#C25E17]"
+                        />
+                        <span>
+                          <span className="block text-xs font-bold text-stone-700">¿Requiere químico especial?</span>
+                          <span className="block text-[11px] text-stone-400 mt-0.5">
+                            Se suma al precio y se detalla en la cotización según el tipo de establecimiento.
+                          </span>
+                        </span>
+                      </label>
+
+                      {needsChemical && (
+                        <div className="mt-3 space-y-2 p-4 bg-stone-50 border border-stone-200 rounded-xl">
+                          {availableChemicals.length === 0 && (
+                            <p className="text-xs text-stone-400">No hay químicos especiales configurados para este tipo de establecimiento.</p>
+                          )}
+                          {availableChemicals.map((c) => (
+                            <label key={c.id} className={`flex items-start gap-3 p-3 rounded-lg border bg-white cursor-pointer transition ${selectedChemicals.includes(c.id) ? "border-[#C25E17]/50" : "border-stone-200 hover:border-stone-300"}`}>
+                              <input
+                                type="checkbox"
+                                checked={selectedChemicals.includes(c.id)}
+                                onChange={() => toggleChemical(c.id)}
+                                className="mt-0.5 accent-[#C25E17]"
+                              />
+                              <span className="flex-1">
+                                <span className="block text-xs font-bold text-stone-800">{c.name}</span>
+                                <span className="block text-[11px] text-stone-400 mt-0.5">{c.description}</span>
+                              </span>
+                              <span className="text-[10px] font-semibold text-stone-500 whitespace-nowrap">
+                                ${c.unitCostUsd.toFixed(2)} / {BASIS_LABEL[c.basis]}
+                              </span>
+                            </label>
+                          ))}
+
+                          {/* ¿No encontraste el químico? */}
+                          <div className="pt-2 border-t border-stone-200 mt-3">
+                            {!showSuggestion && !suggestionSent && (
+                              <button
+                                type="button"
+                                onClick={() => setShowSuggestion(true)}
+                                className="text-xs font-semibold text-[#C25E17] hover:underline"
+                              >
+                                ¿No encontraste el químico que buscabas? Danos una sugerencia
+                              </button>
+                            )}
+
+                            {showSuggestion && !suggestionSent && (
+                              <div className="space-y-2">
+                                <label className="block text-[11px] font-bold text-stone-500">
+                                  ¿Qué químico necesitas?
+                                </label>
+                                <textarea
+                                  value={suggestionText}
+                                  onChange={(e) => setSuggestionText(e.target.value)}
+                                  rows={2}
+                                  maxLength={300}
+                                  placeholder="Ej. Removedor de óxido para escaleras metálicas"
+                                  className="w-full rounded-lg border border-stone-200 bg-white p-2.5 text-xs outline-none focus:border-[#C25E17] resize-none"
+                                />
+                                <div className="flex items-center justify-between gap-2">
+                                  <button
+                                    type="button"
+                                    onClick={() => { setShowSuggestion(false); setSuggestionText(""); }}
+                                    className="text-xs font-semibold text-stone-400 hover:text-stone-600"
+                                  >
+                                    Cancelar
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={submitSuggestion}
+                                    disabled={!suggestionText.trim()}
+                                    className="rounded-lg bg-stone-900 hover:bg-stone-800 text-white text-xs font-bold px-4 py-2 transition disabled:opacity-40"
+                                  >
+                                    Enviar sugerencia
+                                  </button>
+                                </div>
+                              </div>
+                            )}
+
+                            {suggestionSent && (
+                              <div className="flex items-center justify-between gap-3 p-3 rounded-lg bg-emerald-50 border border-emerald-100 text-xs text-emerald-700 font-medium">
+                                <span className="flex items-center gap-1.5">
+                                  <CheckCircle className="w-3.5 h-3.5" /> ¡Gracias! Recibimos tu sugerencia.
+                                </span>
+                                <button
+                                  type="button"
+                                  onClick={() => { setSuggestionSent(false); setShowSuggestion(true); }}
+                                  className="font-semibold underline"
+                                >
+                                  Enviar otra
+                                </button>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      )}
                     </div>
 
                     <div className="pt-2">
@@ -766,6 +895,9 @@ export default function CleanQuoteApp() {
               <h4 className="font-bold mb-2">CONDICIONES DE LA COTIZACIÓN</h4>
               <ul className="text-sm space-y-1 list-disc list-inside">
                 <li><strong>Productos e insumos:</strong> Los aporta la empresa (Incluidos en la cotización).</li>
+                {quoteResult.parameterSnapshot?.specialChemicals?.length > 0 && (
+                  <li><strong>Químicos especiales:</strong> {quoteResult.parameterSnapshot.specialChemicals.map((c: any) => c.name).join(", ")} (incluidos y detallados en la cotización).</li>
+                )}
                 <li><strong>Equipos y herramientas:</strong> Los aporta la empresa (Depreciación incluida).</li>
                 <li><strong>Forma de pago:</strong> Transferencia bancaria o efectivo contra entrega de factura.</li>
                 <li><strong>Observaciones:</strong> Cotización calculada mediante inteligencia artificial CleanQuote.</li>

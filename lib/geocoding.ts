@@ -158,7 +158,13 @@ const OVERPASS_ENDPOINTS = [
   "https://overpass.private.coffee/api/interpreter",
 ];
 
+let overpassCooldownUntil = 0; // si todos los servidores fallan, no insistimos durante 60 s
+
 async function overpassQuery(q: string) {
+  if (Date.now() < overpassCooldownUntil) {
+    console.log("[INFO] Overpass en pausa (falló hace poco), se omite.");
+    return null;
+  }
   for (const url of OVERPASS_ENDPOINTS) {
     try {
       const res = await fetch(url, {
@@ -177,62 +183,74 @@ async function overpassQuery(q: string) {
       console.warn(`⚠️ Overpass ${new URL(url).host} falló: ${cause}`);
     }
   }
+  overpassCooldownUntil = Date.now() + 60_000;
   return null;
 }
 
-// Punto exacto donde se cruzan dos calles (OpenStreetMap / Overpass)
-async function findIntersection(street1: string, street2: string) {
-  const q = `[out:json][timeout:20];
+// Cruce de dos calles en Overpass: primero nodo compartido, luego punto a < 200 m
+async function findCrossing(street1: string, street2: string) {
+  const head = `[out:json][timeout:20];
     way["highway"]["name"~"${accentInsensitive(street1)}",i](${QUITO_BBOX})->.a;
-    way["highway"]["name"~"${accentInsensitive(street2)}",i](${QUITO_BBOX})->.b;
-    node(w.a)(w.b);
-    out 1;`;
-  const data = await overpassQuery(q);
-  const node = data?.elements?.[0];
-  if (data && !node) console.log(`[INFO] Overpass no encontró cruce entre "${street1}" y "${street2}"`);
-  return node ? { lat: node.lat as number, lon: node.lon as number } : null;
-}
+    way["highway"]["name"~"${accentInsensitive(street2)}",i](${QUITO_BBOX})->.b;`;
 
-// Punto de la calle 1 a menos de 200 m de la calle 2 (cuando no comparten nodo)
-async function findNear(street1: string, street2: string) {
-  const q = `[out:json][timeout:20];
-    way["highway"]["name"~"${accentInsensitive(street1)}",i](${QUITO_BBOX})->.a;
-    way["highway"]["name"~"${accentInsensitive(street2)}",i](${QUITO_BBOX})->.b;
-    node(w.a)(around.b:200);
-    out 1;`;
-  const data = await overpassQuery(q);
-  const node = data?.elements?.[0];
-  return node ? { lat: node.lat as number, lon: node.lon as number } : null;
+  const exact = await overpassQuery(`${head} node(w.a)(w.b); out 1;`);
+  if (!exact) return null; // Overpass no responde: no insistimos con la 2ª consulta
+  const n1 = exact.elements?.[0];
+  if (n1) {
+    console.log("[EXITO] Esquina exacta encontrada en OpenStreetMap");
+    return { lat: n1.lat as number, lon: n1.lon as number };
+  }
+
+  const near = await overpassQuery(`${head} node(w.a)(around.b:200); out 1;`);
+  const n2 = near?.elements?.[0];
+  if (n2) {
+    console.log("[EXITO] Punto de la calle 1 a menos de 200 m de la calle 2");
+    return { lat: n2.lat as number, lon: n2.lon as number };
+  }
+  console.log(`[INFO] Overpass no encontró cruce entre "${street1}" y "${street2}"`);
+  return null;
 }
 
 // Geocodificador de Esri: entiende esquinas ("calle & calle").
 // Nota: el servicio gratuito es para búsquedas; guardar resultados a largo plazo
 // requiere cuenta/licencia de ArcGIS. Aceptable para una demo o hackathon.
 async function esriIntersection(street1: string, street2: string) {
-  try {
-    const url =
-      "https://geocode.arcgis.com/arcgis/rest/services/World/GeocodeServer/findAddressCandidates" +
-      `?f=json&maxLocations=1&countryCode=ECU&outFields=Match_addr` +
-      `&location=-78.4678,-0.1806` +
-      `&singleLine=${encodeURIComponent(`${street1} & ${street2}, Quito, Ecuador`)}`;
-    const res = await fetch(url, { signal: AbortSignal.timeout(10000) });
-    if (!res.ok) {
-      console.warn(`⚠️ Esri respondió HTTP ${res.status}`);
-      return null;
+  const variants = [
+    `${street1} & ${street2}, Quito, Ecuador`,
+    `Avenida ${street1} & ${street2}, Quito, Ecuador`,
+  ];
+  for (const text of variants) {
+    try {
+      const url =
+        "https://geocode.arcgis.com/arcgis/rest/services/World/GeocodeServer/findAddressCandidates" +
+        `?f=json&maxLocations=3&countryCode=ECU&outFields=Match_addr,Addr_type` +
+        `&location=-78.4678,-0.1806&singleLine=${encodeURIComponent(text)}`;
+      const res = await fetch(url, { signal: AbortSignal.timeout(10000) });
+      if (!res.ok) {
+        console.warn(`⚠️ Esri respondió HTTP ${res.status}`);
+        continue;
+      }
+      const data = await res.json();
+      const cands: any[] = data?.candidates ?? [];
+      console.log(
+        `[ESRI] "${text}" ->`,
+        cands.map((c) => `${c.address} (score ${c.score}, ${c.attributes?.Addr_type})`)
+      );
+      for (const c of cands) {
+        const lat = c.location?.y as number;
+        const lon = c.location?.x as number;
+        const inQuito = lat >= -0.35 && lat <= -0.05 && lon >= -78.58 && lon <= -78.38;
+        // Solo aceptamos cruces ("StreetInt") o direcciones con buena puntuación dentro de Quito
+        if (inQuito && c.score >= 85 && ["StreetInt", "PointAddress", "StreetAddress"].includes(c.attributes?.Addr_type)) {
+          return { lat, lon };
+        }
+      }
+    } catch (e: any) {
+      const cause = e?.cause?.code || e?.cause?.message || e?.name || String(e);
+      console.warn(`⚠️ Esri falló: ${cause}`);
     }
-    const data = await res.json();
-    const c = data?.candidates?.[0];
-    if (!c || c.score < 85) return null;
-    const lat = c.location.y as number;
-    const lon = c.location.x as number;
-    // Validar que caiga dentro de Quito
-    if (lat < -0.35 || lat > -0.05 || lon < -78.58 || lon > -78.38) return null;
-    return { lat, lon };
-  } catch (e: any) {
-    const cause = e?.cause?.code || e?.cause?.message || e?.name || String(e);
-    console.warn(`⚠️ Esri falló: ${cause}`);
-    return null;
   }
+  return null;
 }
 
 // Búsqueda en Nominatim limitada a Quito
@@ -272,18 +290,11 @@ export async function geocodeAddress(rawAddress: string): Promise<{ lat: number;
 
     let hit: { lat: number; lon: number } | null = null;
 
-    // 2) Esquina exacta (calle + calle)
+    // 2) Esquina exacta (calle + calle): Esri primero, luego Overpass
     if (parsed.street1 && parsed.street2) {
-      hit = await findIntersection(parsed.street1, parsed.street2);
-      if (hit) console.log("[EXITO] Esquina exacta encontrada en OpenStreetMap");
-      if (!hit) {
-        hit = await findNear(parsed.street1, parsed.street2);
-        if (hit) console.log("[EXITO] Punto de la calle 1 a menos de 200 m de la calle 2");
-      }
-      if (!hit) {
-        hit = await esriIntersection(parsed.street1, parsed.street2);
-        if (hit) console.log("[EXITO] Esquina encontrada con Esri");
-      }
+      hit = await esriIntersection(parsed.street1, parsed.street2);
+      if (hit) console.log("[EXITO] Esquina encontrada con Esri");
+      if (!hit) hit = await findCrossing(parsed.street1, parsed.street2);
     }
 
     // 3) Lugar conocido

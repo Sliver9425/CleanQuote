@@ -3,6 +3,7 @@ import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/db';
 import { calculateCleanQuote, QuoteInput } from '@/lib/pricing/engine';
 import { geocodeAddress } from '@/lib/geocoding';
+import { applySpecialChemicals } from '@/lib/pricing/chemicals';
 
 export async function POST(request: Request) {
   try {
@@ -25,7 +26,20 @@ export async function POST(request: Request) {
     };
 
     // 2. Usamos el motor matemático
-    const result = calculateCleanQuote(safeInput);
+    const baseResult = calculateCleanQuote(safeInput);
+
+    // 2b. QUÍMICOS ESPECIALES (opcional): se suman al precio y se desglosan como líneas propias
+    const specialChemicals: string[] = Array.isArray(body.specialChemicals)
+      ? body.specialChemicals.filter((x: unknown): x is string => typeof x === 'string')
+      : [];
+    const result = applySpecialChemicals(baseResult, {
+      facilityType: safeInput.facilityType,
+      frequencyType: safeInput.frequencyType,
+      areaM2: safeInput.areaM2,
+      bathroomsCount: safeInput.bathroomsCount,
+      windowsM2: safeInput.windowsM2,
+      chemicalIds: specialChemicals,
+    });
 
     // 3. OBTENEMOS COORDENADAS REALES EN TIEMPO REAL
     const facilityName = body.facilityName || 'Instalación Principal';
