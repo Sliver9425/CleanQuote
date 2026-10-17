@@ -11,24 +11,25 @@ export interface QuoteInput {
   disinfectionLevel: 'CONTINUOUS_BASIC' | 'SPOT_STANDARD' | 'CLINICAL';
   frequencyType: 'SPOT' | 'WEEKLY' | 'MONTHLY_DAILY';
   isNightShift?: boolean;
-  // OPCIONAL: pisos mixtos. Con 2+ materiales distintos, la mano de obra se calcula por zona.
-  // Sin este campo (o con un solo material) el cálculo es exactamente el de siempre.
   floorZones?: { floorMaterial: 'TILE' | 'VINYL' | 'CARPET' | 'MARBLE'; areaM2: number }[];
 }
 
-// Diccionario de factores por defecto (Mercado Ecuador)
+// Diccionario Base (Calibrado inicialmente para superficies pequeñas/medianas)
 export const DEFAULT_EC_PARAMS = {
-  cBaseHour: 4.00,      // $4.00 USD/h (SBU $470 + IESS + Décimos + EPP básico)
-  rBaseM2H: 30.0,       // 30 m²/hora estándar
+  cBaseHour: 4.00,      // $4.00 USD/h (SBU + Beneficios de Ley Ecuador)
+  rBaseM2H: 30.0,       // RENDIMIENTO BASE: 30 m²/hora (Limpieza manual tradicional)
   overheadPct: 0.15,    // 15% gastos administrativos
-  marginPct: 0.20,      // 20% margen comercial sobre precio
+  marginPct: 0.20,      // 20% margen comercial
   ivaPct: 0.15,         // 15% IVA Ecuador
-  complexity: { OFFICE: 1.0, RESIDENTIAL: 1.2, HEALTH: 1.4, POST_CONSTRUCTION: 2.0 },
+  complexity: { OFFICE: 1.0, RESIDENTIAL: 1.2, HEALTH: 1.5, POST_CONSTRUCTION: 2.0 },
   floor: { TILE: 1.0, VINYL: 1.1, CARPET: 1.3, MARBLE: 1.5 },
   risk: { LOW: 1.0, MEDIUM: 1.3, HIGH: 1.5 },
   traffic: { LOW: 0.9, MEDIUM: 1.0, HIGH: 1.2 },
-  suppliesRateM2: { CONTINUOUS_BASIC: 0.05, SPOT_STANDARD: 0.10, CLINICAL: 0.35 },
-  equipmentKitHour: { OFFICE: 0.40, RESIDENTIAL: 0.40, HEALTH: 1.33, POST_CONSTRUCTION: 2.10 },
+  
+  // Costo base minorista por m2 de químico
+  suppliesRateM2: { CONTINUOUS_BASIC: 0.05, SPOT_STANDARD: 0.08, CLINICAL: 0.25 },
+  equipmentKitHour: { OFFICE: 0.40, RESIDENTIAL: 0.40, HEALTH: 1.00, POST_CONSTRUCTION: 2.10 },
+  
   frequency: {
     SPOT: { multiplier: 1.10, eventsPerMonth: 1, label: 'Servicio Único (Recargo logístico +10%)' },
     WEEKLY: { multiplier: 1.00, eventsPerMonth: 4.33, label: 'Semanal Estándar (4.33 visitas/mes)' },
@@ -43,8 +44,7 @@ const FLOOR_NAMES: Record<string, string> = {
   MARBLE: 'Mármol / Piedra',
 };
 
-// Devuelve las zonas de piso (una por material) o null si NO hay pisos mixtos.
-function buildFloorZones(input: QuoteInput, params: typeof DEFAULT_EC_PARAMS, fComp: number) {
+function buildFloorZones(input: QuoteInput, params: typeof DEFAULT_EC_PARAMS, fComp: number, efficiencyScale: number) {
   if (!input.floorZones || input.floorZones.length < 2) return null;
 
   const merged = new Map<string, number>();
@@ -55,12 +55,13 @@ function buildFloorZones(input: QuoteInput, params: typeof DEFAULT_EC_PARAMS, fC
   }
   if (merged.size < 2) return null;
 
-  // Se reescala a input.areaM2 para que el total siempre coincida con el área cotizada
   const total = Array.from(merged.values()).reduce((a, b) => a + b, 0);
+  const baseRate = params.rBaseM2H * efficiencyScale; // Aplicamos escala
+
   return Array.from(merged.entries()).map(([material, area]) => {
     const areaM2 = (area / total) * input.areaM2;
     const factor = params.floor[material as keyof typeof params.floor];
-    const rate = Number((params.rBaseM2H / (fComp * factor)).toFixed(2));
+    const rate = Number((baseRate / (fComp * factor)).toFixed(2));
     return { floorMaterial: material, areaM2, factor, rate, hours: areaM2 / rate };
   });
 }
@@ -73,12 +74,46 @@ export function calculateCleanQuote(input: QuoteInput, params = DEFAULT_EC_PARAM
   const fShift = input.isNightShift ? 1.25 : 1.0;
   const freqConfig = params.frequency[input.frequencyType];
 
+  // ==========================================
+  // ECONOMÍA DE ESCALA DINÁMICA (EL CEREBRO DEL NEGOCIO)
+  // ==========================================
+  let efficiencyScale = 1.0;
+  let suppliesDiscount = 1.0;
+  let marginOverride = params.marginPct; // Permite reducir el margen en contratos estatales
+
+  if (input.areaM2 >= 40000) {
+    // TIER 1: Mega Licitaciones SERCOP (Hospitales Titánicos, Aeropuertos)
+    efficiencyScale = 5.0;    // Rendimiento real con obstáculos clínicos (aprox 100 m2/h efectivos)
+    suppliesDiscount = 0.03;  // Insumos de grado clínico comprados en tambores industriales
+    marginOverride = 0.12;    // Margen estatal de utilidad ajustado al 12%
+  } else if (input.areaM2 >= 15000) {
+    // TIER 2: Mega-Instalaciones (Clínicas grandes, Malls)
+    efficiencyScale = 4.0;    
+    suppliesDiscount = 0.10;  
+  } else if (input.areaM2 >= 5000) {
+    // TIER 3: Grandes Industrias y Oficinas Corporativas
+    efficiencyScale = 2.5;    
+    suppliesDiscount = 0.30;  
+  } else if (input.areaM2 >= 1000) {
+    // TIER 4: Oficinas medianas
+    efficiencyScale = 1.5;    
+    suppliesDiscount = 0.60;  
+  } else if (input.areaM2 >= 300) {
+    // TIER 5: Oficinas pequeñas o casas grandes
+    efficiencyScale = 1.2;    
+    suppliesDiscount = 0.85;  
+  }
+  // Menos de 300 m2 mantienen los valores base minoristas puros.
+
   // FASE 1: Productividad y Horas-Hombre
-  const zones = buildFloorZones(input, params, fComp);
+  const baseRate = params.rBaseM2H * efficiencyScale;
+  const zones = buildFloorZones(input, params, fComp, efficiencyScale);
   const zonesHours = zones ? zones.reduce((a, z) => a + z.hours, 0) : 0;
+  
   const effectiveRateM2H = zones
     ? Number((input.areaM2 / zonesHours).toFixed(2))
-    : Number((params.rBaseM2H / (fComp * fFloor)).toFixed(2));
+    : Number((baseRate / (fComp * fFloor)).toFixed(2));
+    
   const baseAreaHours = zones ? zonesHours : input.areaM2 / effectiveRateM2H;
   const extraBathroomsHours = input.bathroomsCount * 0.25;
   const extraWindowsHours = input.windowsM2 * 0.05;
@@ -89,7 +124,7 @@ export function calculateCleanQuote(input: QuoteInput, params = DEFAULT_EC_PARAM
   // FASE 2: Costos Directos
   const laborCost = Number((totalHoursMonth * params.cBaseHour * fRisk * fShift).toFixed(2));
   
-  const supplyRate = params.suppliesRateM2[input.disinfectionLevel];
+  const supplyRate = params.suppliesRateM2[input.disinfectionLevel] * suppliesDiscount;
   const suppliesCost = Number((input.areaM2 * freqConfig.eventsPerMonth * supplyRate * fTraffic).toFixed(2));
 
   const equipRate = params.equipmentKitHour[input.facilityType];
@@ -97,84 +132,92 @@ export function calculateCleanQuote(input: QuoteInput, params = DEFAULT_EC_PARAM
 
   const directCost = Number((laborCost + suppliesCost + equipmentCost).toFixed(2));
 
-  // FASE 3: Indirectos, Margen, Frecuencia e IVA
+  // FASE 3: Indirectos y Margen
   const overheadCost = Number((directCost * params.overheadPct).toFixed(2));
   const totalCost = Number((directCost + overheadCost).toFixed(2));
 
-  // Precio base con margen financiero real: Costo / (1 - Margen)
-  const basePriceWithMargin = Number((totalCost / (1 - params.marginPct)).toFixed(2));
+  // Usamos marginOverride en lugar de params.marginPct directo
+  const basePriceWithMargin = Number((totalCost / (1 - marginOverride)).toFixed(2));
   const marginAmount = Number((basePriceWithMargin - totalCost).toFixed(2));
 
-  // Ajuste por Frecuencia (Spot +10% o Mensual -15%)
-  const subtotalPrice = Number((basePriceWithMargin * freqConfig.multiplier).toFixed(2));
+  // ==========================================
+  // REGLA DE FIDELIDAD (Límite del 8% para Grandes Superficies)
+  // ==========================================
+  let appliedMultiplier = freqConfig.multiplier;
+  let appliedLabel = freqConfig.label;
+
+  if (input.areaM2 >= 10000 && appliedMultiplier < 1.0) {
+    appliedMultiplier = 0.92; // Max 8% de descuento
+    appliedLabel = 'Mensual Fijo L-V (Descuento fidelidad ajustado a -8% por Gran Superficie)';
+  }
+
+  // Ajuste final
+  const subtotalPrice = Number((basePriceWithMargin * appliedMultiplier).toFixed(2));
   const frequencyAdjustment = Number((subtotalPrice - basePriceWithMargin).toFixed(2));
 
   const ivaAmount = Number((subtotalPrice * params.ivaPct).toFixed(2));
   const finalPrice = Number((subtotalPrice + ivaAmount).toFixed(2));
   const pricePerM2 = Number((subtotalPrice / input.areaM2).toFixed(2));
 
+  // Desglose para el PDF y la interfaz
   const nombresDesinfeccion: Record<string, string> = {
-      SPOT_STANDARD: "Estándar",
-      CONTINUOUS_BASIC: "Continua Básica",
-      CLINICAL: "Nivel Clínico"
-    };
+    SPOT_STANDARD: "Estándar",
+    CONTINUOUS_BASIC: "Continua Básica",
+    CLINICAL: "Nivel Clínico"
+  };
 
-    const nombresInstalacion: Record<string, string> = {
-      OFFICE: "Oficinas",
-      RESIDENTIAL: "Residencial",
-      HEALTH: "Áreas de Salud/Clínicas",
-      POST_CONSTRUCTION: "Post-Construcción"
-    };
-  // Desglose explicable para renderizar en las tarjetas/tablas de Tailwind CSS
-const lineItems = [
+  const nombresInstalacion: Record<string, string> = {
+    OFFICE: "Oficinas",
+    RESIDENTIAL: "Residencial",
+    HEALTH: "Áreas de Salud/Clínicas",
+    POST_CONSTRUCTION: "Post-Construcción"
+  };
+
+  const lineItems = [
     {
       category: 'LABOR',
       concept: 'Mano de Obra Técnica y Bioseguridad',
       formulaUsed: `${totalHoursMonth} h/mes × $${params.cBaseHour}/h × Riesgo(${fRisk}x)`,
-      explanation: `Rendimiento ajustado a ${effectiveRateM2H} m²/h (Complejidad ${fComp}x, Piso ${fFloor}x). Incluye ${input.bathroomsCount} baños y ${input.windowsM2} m² de vidrios.`,
+      explanation: `Rendimiento ajustado a ${effectiveRateM2H} m²/h por economía de escala (Complejidad ${fComp}x, Piso ${fFloor}x). Incluye ${input.bathroomsCount} baños y ${input.windowsM2} m² de vidrios.`,
       amountUsd: laborCost,
     },
     {
       category: 'SUPPLIES',
       concept: 'Insumos y Químicos de Desinfección',
-      formulaUsed: `${input.areaM2} m² × ${freqConfig.eventsPerMonth} eventos × $${supplyRate}/m² × Tráfico(${fTraffic}x)`,
-      // AQUÍ TRADUCIMOS EL NIVEL DE DESINFECCIÓN:
-      explanation: `Químicos de desinfección ${nombresDesinfeccion[input.disinfectionLevel] || input.disinfectionLevel} ajustados al flujo de personas.`,
+      formulaUsed: `${input.areaM2} m² × ${freqConfig.eventsPerMonth} evt × $${supplyRate.toFixed(4)}/m² × Tráfico(${fTraffic}x)`,
+      explanation: `Químicos de desinfección ${nombresDesinfeccion[input.disinfectionLevel] || input.disinfectionLevel} con precio ajustado por volumen.`,
       amountUsd: suppliesCost,
     },
     {
       category: 'EQUIPMENT',
       concept: 'Amortización de Maquinaria y Equipos',
       formulaUsed: `${totalHoursMonth} h/mes × $${equipRate}/h`,
-      // AQUÍ TRADUCIMOS EL TIPO DE ESTABLECIMIENTO:
-      explanation: `Depreciación por hora de uso del kit de maquinaria para ${nombresInstalacion[input.facilityType] || input.facilityType}.`,
+      explanation: `Depreciación por hora de uso de maquinaria industrial para ${nombresInstalacion[input.facilityType] || input.facilityType}.`,
       amountUsd: equipmentCost,
     },
     {
       category: 'OVERHEAD',
-      concept: 'Gastos Administrativos y Supervisión (Overhead)',
+      concept: 'Gastos Administrativos y Supervisión',
       formulaUsed: `15% sobre Costo Directo ($${directCost})`,
-      explanation: `Cubre supervisión operativa, coordinación y logística administrativa.`,
+      explanation: `Cubre supervisión operativa, coordinación y logística.`,
       amountUsd: overheadCost,
     },
     {
       category: 'MARGIN',
-      concept: 'Margen Comercial (20%)',
-      formulaUsed: `Costo Total ($${totalCost}) / (1 - 0.20)`,
+      concept: `Margen Comercial (${marginOverride * 100}%)`,
+      formulaUsed: `Costo Total ($${totalCost}) / (1 - ${marginOverride})`,
       explanation: `Utilidad bruta comercial antes de ajustes de recurrencia.`,
       amountUsd: marginAmount,
     },
     {
       category: 'DISCOUNT_SURCHARGE',
       concept: 'Ajuste por Frecuencia y Fidelidad',
-      formulaUsed: `Factor ${freqConfig.multiplier}x sobre Precio Base`,
-      explanation: freqConfig.label,
+      formulaUsed: `Factor ${appliedMultiplier}x sobre Precio Base`,
+      explanation: appliedLabel,
       amountUsd: frequencyAdjustment,
     }
   ];
 
-  // PISOS MIXTOS: la línea de mano de obra se reemplaza por una línea por tipo de piso
-  // (+ una de baños/ventanas). Las partes suman exactamente laborCost.
   if (zones) {
     const extrasHours = extraBathroomsHours + extraWindowsHours;
     const totalWeight = baseAreaHours + extrasHours;
@@ -183,14 +226,14 @@ const lineItems = [
         hours: z.hours,
         concept: `Mano de Obra – Piso ${FLOOR_NAMES[z.floorMaterial] || z.floorMaterial} (${Number(z.areaM2.toFixed(1))} m²)`,
         formula: `${Number(z.areaM2.toFixed(1))} m² ÷ ${z.rate} m²/h × ${freqConfig.eventsPerMonth} eventos × $${params.cBaseHour}/h × Riesgo(${fRisk}x)`,
-        explanation: `Rendimiento de ${z.rate} m²/h para este piso (Complejidad ${fComp}x, Piso ${z.factor}x).`,
+        explanation: `Rendimiento de ${z.rate} m²/h para este piso.`,
       })),
       ...(extrasHours > 0
         ? [{
             hours: extrasHours,
             concept: 'Mano de Obra – Baños y Ventanas',
-            formula: `(${input.bathroomsCount} baños × 0.25 h + ${input.windowsM2} m² × 0.05 h) × ${freqConfig.eventsPerMonth} eventos × $${params.cBaseHour}/h × Riesgo(${fRisk}x)`,
-            explanation: `Incluye ${input.bathroomsCount} baños y ${input.windowsM2} m² de vidrios.`,
+            formula: `(${input.bathroomsCount} baños + ${input.windowsM2} m² vidrios) × ${freqConfig.eventsPerMonth} evt × $${params.cBaseHour}/h`,
+            explanation: `Incluye mantenimiento de baterías sanitarias y zonas acristaladas.`,
           }]
         : []),
     ];
@@ -212,7 +255,6 @@ const lineItems = [
     });
     lineItems.splice(0, 1, ...zoneItems);
   }
-  
 
   return {
     effectiveRateM2H,
