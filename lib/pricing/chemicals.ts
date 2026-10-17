@@ -21,35 +21,41 @@ export const BASIS_LABEL: Record<ChemicalBasis, string> = {
   FLAT: "servicio",
 };
 
-// ⚠️ PRECIOS REFERENCIALES: reemplázalos por los de tus proveedores.
+// PRECIOS (revisados en oct-2026). Base de cálculo:
+//  - Precio de góndola en Quito, IVA incluido (conservador: si recuperas IVA, ~13% menos;
+//    comprando en caja de 6 se vio ~33% menos por unidad).
+//  - Fuentes: tienda Sello Azul (marca ecuatoriana), un listado de Mercado Libre Ecuador y
+//    fichas técnicas (dilución). El rendimiento por m² NO viene de una fuente: es supuesto.
+//  - Marcas: ✔ = tiene precio ecuatoriano; ~ = derivado de otro producto; ⚠ = SIN precio verificado.
+// ⚠️ Antes de cotizar a clientes reales, confirma estos valores con tus proveedores.
 export const SPECIAL_CHEMICALS: SpecialChemical[] = [
   // ---------------- OFICINA ----------------
-  { id: "office-carpet-shampoo", name: "Shampoo para extracción de alfombra", description: "Limpieza profunda de alfombras y tapizados.", facilityTypes: ["OFFICE"], basis: "M2", unitCostUsd: 0.12, applicationsPerMonth: 1 },
-  { id: "office-floor-polish", name: "Abrillantador / cera para pisos", description: "Brillo y protección de pisos de alto tráfico.", facilityTypes: ["OFFICE"], basis: "M2", unitCostUsd: 0.08, applicationsPerMonth: 1 },
-  { id: "office-glass-pro", name: "Limpiavidrios profesional antiestático", description: "Acabado sin vetas en superficies vidriadas.", facilityTypes: ["OFFICE"], basis: "WINDOW_M2", unitCostUsd: 0.1, applicationsPerMonth: 4 },
-  { id: "office-descaler", name: "Descalcificante sanitario", description: "Elimina sarro en baños y grifería.", facilityTypes: ["OFFICE"], basis: "BATHROOM", unitCostUsd: 1.5, applicationsPerMonth: 4 },
+  { id: "office-carpet-shampoo", name: "Shampoo para extracción de alfombra", description: "Limpieza profunda de alfombras y tapizados.", facilityTypes: ["OFFICE"], basis: "M2", unitCostUsd: 0.12, applicationsPerMonth: 1 },  // ⚠ SIN PRECIO VERIFICADO (estimación original)
+  { id: "office-floor-polish", name: "Abrillantador / cera para pisos", description: "Brillo y protección de pisos de alto tráfico.", facilityTypes: ["OFFICE"], basis: "M2", unitCostUsd: 0.1, applicationsPerMonth: 1 },  // ✔ precio EC (Sello Azul $4.06/L) + rendimiento supuesto ~40 m²/L por capa
+  { id: "office-glass-pro", name: "Limpiavidrios profesional antiestático", description: "Acabado sin vetas en superficies vidriadas.", facilityTypes: ["OFFICE"], basis: "WINDOW_M2", unitCostUsd: 0.06, applicationsPerMonth: 4 },  // ✔ precio EC (Alko Clean $15.11/gal) + consumo supuesto ~15 mL/m²
+  { id: "office-descaler", name: "Descalcificante sanitario", description: "Elimina sarro en baños y grifería.", facilityTypes: ["OFFICE"], basis: "BATHROOM", unitCostUsd: 0.6, applicationsPerMonth: 4 },  // ✔ precio EC (Elimina Sarro $14.93/gal) + ~120 mL por baño
 
   // ---------------- RESIDENCIAL ----------------
-  { id: "res-degreaser", name: "Desengrasante para cocina", description: "Grasa adherida en cocina, campana y azulejos.", facilityTypes: ["RESIDENTIAL"], basis: "FLAT", unitCostUsd: 6, applicationsPerMonth: 1 },
-  { id: "res-limescale", name: "Removedor de sarro y cal", description: "Baños con incrustaciones de agua dura.", facilityTypes: ["RESIDENTIAL"], basis: "BATHROOM", unitCostUsd: 1.8, applicationsPerMonth: 1 },
-  { id: "res-anti-mold", name: "Tratamiento antimoho", description: "Humedad y moho en paredes y juntas.", facilityTypes: ["RESIDENTIAL"], basis: "M2", unitCostUsd: 0.1, applicationsPerMonth: 1 },
+  { id: "res-degreaser", name: "Desengrasante para cocina", description: "Grasa adherida en cocina, campana y azulejos.", facilityTypes: ["RESIDENTIAL"], basis: "FLAT", unitCostUsd: 2.0, applicationsPerMonth: 1 },  // ✔ precio EC (Desengrasante Prof. $15.20/gal, spray 500 mL $3.76) + uso supuesto por cocina
+  { id: "res-limescale", name: "Removedor de sarro y cal", description: "Baños con incrustaciones de agua dura.", facilityTypes: ["RESIDENTIAL"], basis: "BATHROOM", unitCostUsd: 1.0, applicationsPerMonth: 1 },  // ✔ precio EC (Elimina Sarro $14.93/gal) + ~250 mL por baño con sarro fuerte
+  { id: "res-anti-mold", name: "Tratamiento antimoho", description: "Humedad y moho en paredes y juntas.", facilityTypes: ["RESIDENTIAL"], basis: "M2", unitCostUsd: 0.05, applicationsPerMonth: 1 },  // ~ derivado de cloro EC ($4.80/gal), dilución y cobertura supuestas
 
   // ---------------- SALUD / CLÍNICO ----------------
-  { id: "health-quat-disinfectant", name: "Desinfectante hospitalario (amonios cuaternarios)", description: "Desinfección de superficies de contacto frecuente.", facilityTypes: ["HEALTH"], basis: "M2", unitCostUsd: 0.06, applicationsPerMonth: 4 },
-  { id: "health-high-level", name: "Desinfectante de alto nivel (peróxido / ácido peracético)", description: "Áreas críticas y zonas de riesgo biológico.", facilityTypes: ["HEALTH"], basis: "M2", unitCostUsd: 0.15, applicationsPerMonth: 1 },
-  { id: "health-bio-spill", name: "Kit de derrames biológicos", description: "Absorbente + desinfectante para fluidos corporales.", facilityTypes: ["HEALTH"], basis: "FLAT", unitCostUsd: 12, applicationsPerMonth: 1 },
-  { id: "health-enzymatic", name: "Neutralizador enzimático de olores", description: "Control de olores en áreas clínicas y baños.", facilityTypes: ["HEALTH"], basis: "M2", unitCostUsd: 0.04, applicationsPerMonth: 1 },
+  { id: "health-quat-disinfectant", name: "Desinfectante hospitalario (amonios cuaternarios)", description: "Desinfección de superficies de contacto frecuente.", facilityTypes: ["HEALTH"], basis: "M2", unitCostUsd: 0.01, applicationsPerMonth: 4 },  // ✔ precio EC (cuaternario 5ta gen. galón ~$20, Mercado Libre EC) + dilución de fichas técnicas
+  { id: "health-high-level", name: "Desinfectante de alto nivel (peróxido / ácido peracético)", description: "Áreas críticas y zonas de riesgo biológico.", facilityTypes: ["HEALTH"], basis: "M2", unitCostUsd: 0.15, applicationsPerMonth: 1 },  // ⚠ SIN PRECIO VERIFICADO (estimación original)
+  { id: "health-bio-spill", name: "Kit de derrames biológicos", description: "Absorbente + desinfectante para fluidos corporales.", facilityTypes: ["HEALTH"], basis: "FLAT", unitCostUsd: 12, applicationsPerMonth: 1 },  // ⚠ SIN PRECIO VERIFICADO (estimación original)
+  { id: "health-enzymatic", name: "Neutralizador enzimático de olores", description: "Control de olores en áreas clínicas y baños.", facilityTypes: ["HEALTH"], basis: "M2", unitCostUsd: 0.04, applicationsPerMonth: 1 },  // ⚠ SIN PRECIO VERIFICADO (estimación original)
 
   // ---------------- POST-OBRA ----------------
-  { id: "post-cement-remover", name: "Desincrustante ácido para cemento y lechada", description: "Restos de cemento, mortero y lechada en pisos.", facilityTypes: ["POST_CONSTRUCTION"], basis: "M2", unitCostUsd: 0.35, applicationsPerMonth: 1 },
-  { id: "post-paint-remover", name: "Removedor de pintura y adhesivos", description: "Salpicaduras de pintura y pegamentos.", facilityTypes: ["POST_CONSTRUCTION"], basis: "M2", unitCostUsd: 0.25, applicationsPerMonth: 1 },
-  { id: "post-glass-cleaner", name: "Limpiador de vidrios post-obra", description: "Residuos de silicona, pintura y polvo fino en vidrios.", facilityTypes: ["POST_CONSTRUCTION"], basis: "WINDOW_M2", unitCostUsd: 0.3, applicationsPerMonth: 1 },
-  { id: "post-tile-protector", name: "Limpiador y protector de porcelanato", description: "Limpieza final y protección de pisos nuevos.", facilityTypes: ["POST_CONSTRUCTION"], basis: "M2", unitCostUsd: 0.2, applicationsPerMonth: 1 },
+  { id: "post-cement-remover", name: "Desincrustante ácido para cemento y lechada", description: "Restos de cemento, mortero y lechada en pisos.", facilityTypes: ["POST_CONSTRUCTION"], basis: "M2", unitCostUsd: 0.12, applicationsPerMonth: 1 },  // ✔ precio EC (Muriatol $16.62/gal) + dilución y consumo supuestos
+  { id: "post-paint-remover", name: "Removedor de pintura y adhesivos", description: "Salpicaduras de pintura y pegamentos.", facilityTypes: ["POST_CONSTRUCTION"], basis: "M2", unitCostUsd: 0.25, applicationsPerMonth: 1 },  // ⚠ SIN PRECIO VERIFICADO (estimación original)
+  { id: "post-glass-cleaner", name: "Limpiador de vidrios post-obra", description: "Residuos de silicona, pintura y polvo fino en vidrios.", facilityTypes: ["POST_CONSTRUCTION"], basis: "WINDOW_M2", unitCostUsd: 0.15, applicationsPerMonth: 1 },  // ✔ precio EC (Alko Clean) con consumo ~2.5x por residuos de obra (supuesto)
+  { id: "post-tile-protector", name: "Limpiador y protector de porcelanato", description: "Limpieza final y protección de pisos nuevos.", facilityTypes: ["POST_CONSTRUCTION"], basis: "M2", unitCostUsd: 0.15, applicationsPerMonth: 1 },  // ✔ precio EC (Abrillanta Porcelanato $4.06/L) + limpiador (supuesto)
 
   // ---------------- INDUSTRIAL ----------------
-  { id: "ind-degreaser", name: "Desengrasante industrial alcalino", description: "Aceites y grasas en pisos de planta o bodega.", facilityTypes: ["INDUSTRIAL"], basis: "M2", unitCostUsd: 0.18, applicationsPerMonth: 1 },
-  { id: "ind-epoxy-cleaner", name: "Limpiador para pisos epóxicos", description: "Mantenimiento sin dañar el recubrimiento.", facilityTypes: ["INDUSTRIAL"], basis: "M2", unitCostUsd: 0.12, applicationsPerMonth: 1 },
-  { id: "ind-rust-remover", name: "Removedor de óxido", description: "Manchas de óxido en pisos y estructuras.", facilityTypes: ["INDUSTRIAL"], basis: "FLAT", unitCostUsd: 15, applicationsPerMonth: 1 },
+  { id: "ind-degreaser", name: "Desengrasante industrial alcalino", description: "Aceites y grasas en pisos de planta o bodega.", facilityTypes: ["INDUSTRIAL"], basis: "M2", unitCostUsd: 0.05, applicationsPerMonth: 1 },  // ✔ precio EC (Desengrasante Prof. $15.20/gal) + dilución 1:10 de ficha técnica
+  { id: "ind-epoxy-cleaner", name: "Limpiador para pisos epóxicos", description: "Mantenimiento sin dañar el recubrimiento.", facilityTypes: ["INDUSTRIAL"], basis: "M2", unitCostUsd: 0.03, applicationsPerMonth: 1 },  // ~ derivado del desengrasante EC a dilución general 1:20
+  { id: "ind-rust-remover", name: "Removedor de óxido", description: "Manchas de óxido en pisos y estructuras.", facilityTypes: ["INDUSTRIAL"], basis: "FLAT", unitCostUsd: 15, applicationsPerMonth: 1 },  // ⚠ SIN PRECIO VERIFICADO (estimación original)
 ];
 
 export function getChemicalsForFacility(facilityType: string): SpecialChemical[] {
