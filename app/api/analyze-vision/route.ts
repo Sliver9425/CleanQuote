@@ -32,6 +32,7 @@ export async function POST(request: Request) {
       {
         "facilityType": "OFFICE o RESIDENTIAL o HEALTH o POST_CONSTRUCTION",
         "floorMaterial": "TILE o VINYL o CARPET o MARBLE",
+        "floorMaterials": ["lista de TODOS los tipos de piso distintos que se vean en la imagen, usando solo TILE, VINYL, CARPET o MARBLE; el primero es el predominante"],
         "riskLevel": "LOW o MEDIUM o HIGH",
         "trafficLevel": "LOW o MEDIUM o HIGH",
         "disinfectionLevel": "SPOT_STANDARD o CONTINUOUS_BASIC o CLINICAL"

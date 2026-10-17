@@ -114,6 +114,74 @@ function parseTranscript(transcript: string): Record<string, string> {
 }
 
 // ============================================================================
+// 1b. PISOS Y FOTOS MÚLTIPLES (helpers)
+// ============================================================================
+const FLOOR_OPTIONS = [
+  { value: "TILE", label: "Baldosa / Cerámica Gres" },
+  { value: "VINYL", label: "Vinílico / PVC" },
+  { value: "CARPET", label: "Alfombra" },
+  { value: "MARBLE", label: "Mármol / Piedra" },
+];
+const FLOOR_LABELS: Record<string, string> = Object.fromEntries(FLOOR_OPTIONS.map((o) => [o.value, o.label]));
+const MAX_PHOTOS = 4;
+
+// Reduce la foto antes de enviarla (más rápido y gasta menos cuota de la IA)
+async function resizeImage(file: File, maxSize = 1280): Promise<Blob> {
+  try {
+    const bitmap = await createImageBitmap(file);
+    const scale = Math.min(1, maxSize / Math.max(bitmap.width, bitmap.height));
+    if (scale === 1 && file.size < 800_000) return file;
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.round(bitmap.width * scale);
+    canvas.height = Math.round(bitmap.height * scale);
+    canvas.getContext("2d")!.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+    return await new Promise<Blob>((resolve) => canvas.toBlob((b) => resolve(b ?? file), "image/jpeg", 0.85));
+  } catch {
+    return file;
+  }
+}
+
+async function analyzeOnePhoto(file: File): Promise<any> {
+  const blob = await resizeImage(file);
+  const fd = new FormData();
+  fd.append("image", blob, file.name || "foto.jpg");
+  const res = await fetch("/api/analyze-vision", { method: "POST", body: fd });
+  if (!res.ok) throw new Error("API saturada");
+  return res.json();
+}
+
+// Combina lo detectado en varias fotos: lo más exigente gana en riesgo/tráfico/desinfección,
+// y los pisos se listan por frecuencia (el primero será el piso principal).
+function mergeDetections(results: any[]) {
+  const LEVEL: Record<string, number> = { LOW: 0, MEDIUM: 1, HIGH: 2 };
+  const DISINFECTION: Record<string, number> = { SPOT_STANDARD: 0, CONTINUOUS_BASIC: 1, CLINICAL: 2 };
+  const highest = (vals: any[], rank: Record<string, number>) =>
+    vals.filter((v) => typeof v === "string" && v in rank).sort((a, b) => rank[b] - rank[a])[0] as string | undefined;
+
+  const counts = (vals: string[]) => {
+    const m = new Map<string, number>();
+    vals.forEach((v) => m.set(v, (m.get(v) ?? 0) + 1));
+    return Array.from(m.entries()).sort((a, b) => b[1] - a[1]).map(([v]) => v);
+  };
+
+  const floors = counts(
+    results.flatMap((r) => {
+      const list: any[] = Array.isArray(r.floorMaterials) && r.floorMaterials.length ? r.floorMaterials : [r.floorMaterial];
+      return Array.from(new Set(list.filter((f) => FLOOR_LABELS[f])));
+    })
+  );
+  const facilityTypes = counts(results.map((r) => r.facilityType).filter(Boolean));
+
+  return {
+    facilityType: facilityTypes[0] as string | undefined,
+    floors,
+    riskLevel: highest(results.map((r) => r.riskLevel), LEVEL),
+    trafficLevel: highest(results.map((r) => r.trafficLevel), LEVEL),
+    disinfectionLevel: highest(results.map((r) => r.disinfectionLevel), DISINFECTION),
+  };
+}
+
+// ============================================================================
 // 2. COMPONENTE PRINCIPAL
 // ============================================================================
 export default function CleanQuoteApp() {
@@ -135,6 +203,8 @@ export default function CleanQuoteApp() {
   const [imagePreview, setImagePreview] = useState<string | null>(null);
   const [needsChemical, setNeedsChemical] = useState(false);
   const [selectedChemicals, setSelectedChemicals] = useState<string[]>([]);
+  const [imagePreviews, setImagePreviews] = useState<string[]>([]);
+  const [extraFloors, setExtraFloors] = useState<{ floorMaterial: string; areaM2: number | "" }[]>([]);
   const [showSuggestion, setShowSuggestion] = useState(false);
   const [suggestionText, setSuggestionText] = useState("");
   const [suggestionSent, setSuggestionSent] = useState(false);
@@ -231,31 +301,34 @@ export default function CleanQuoteApp() {
   }
 
   const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
+    const files = Array.from((e.target.files ?? []) as ArrayLike<File>).slice(0, MAX_PHOTOS);
+    if (files.length === 0) return;
 
-    setImagePreview(URL.createObjectURL(file));
+    const previews = files.map((f) => URL.createObjectURL(f));
+    setImagePreview(previews[0]);
+    setImagePreviews(previews);
     setIsAnalyzing(true);
-    
-    try {
-      const formData = new FormData();
-      formData.append("image", file);
-      const res = await fetch("/api/analyze-vision", { method: "POST", body: formData });
 
-      if (res.ok) {
-        const aiData = await res.json();
-        setForm({
-          ...form,
-          facilityType: aiData.facilityType || form.facilityType,
-          floorMaterial: aiData.floorMaterial || form.floorMaterial,
-          riskLevel: aiData.riskLevel || form.riskLevel,
-          trafficLevel: aiData.trafficLevel || form.trafficLevel,
-          disinfectionLevel: aiData.disinfectionLevel || form.disinfectionLevel,
-        });
-        setStep(2);
-      } else {
-        throw new Error("API saturada");
-      }
+    try {
+      // Todas las fotos se analizan en paralelo con el mismo endpoint
+      const settled = await Promise.allSettled(files.map((file) => analyzeOnePhoto(file)));
+      const results = settled
+        .filter((r): r is PromiseFulfilledResult<any> => r.status === "fulfilled")
+        .map((r) => r.value);
+      if (results.length === 0) throw new Error("API saturada");
+
+      const merged = mergeDetections(results);
+      setForm({
+        ...form,
+        facilityType: merged.facilityType || form.facilityType,
+        floorMaterial: merged.floors[0] || form.floorMaterial,
+        riskLevel: merged.riskLevel || form.riskLevel,
+        trafficLevel: merged.trafficLevel || form.trafficLevel,
+        disinfectionLevel: merged.disinfectionLevel || form.disinfectionLevel,
+      });
+      // Si se detectaron más pisos, quedan listos para que el usuario indique los m² de cada uno
+      setExtraFloors(merged.floors.slice(1).map((m) => ({ floorMaterial: m, areaM2: "" as const })));
+      setStep(2);
     } catch (error) {
       setForm({ ...form, facilityType: "RESIDENTIAL", floorMaterial: "TILE", riskLevel: "LOW", trafficLevel: "MEDIUM" });
       setStep(2);
@@ -274,6 +347,15 @@ export default function CleanQuoteApp() {
         areaM2: Number(areaM2) || 0,
         bathroomsCount: bathroomsCount !== "" ? Number(bathroomsCount) : undefined,
         windowsM2: windowsM2 !== "" ? Number(windowsM2) : undefined,
+        // Pisos mixtos: el piso principal + los adicionales, cada uno con sus m²
+        ...(extraFloors.length > 0 && !floorError
+          ? {
+              floorZones: [
+                { floorMaterial: form.floorMaterial, areaM2: primaryFloorArea },
+                ...extraFloors.map((f) => ({ floorMaterial: f.floorMaterial, areaM2: Number(f.areaM2) })),
+              ],
+            }
+          : {}),
         // Solo se envían químicos válidos para el tipo de establecimiento actual
         specialChemicals: needsChemical
           ? selectedChemicals.filter((id) => availableChemicals.some((c) => c.id === id))
@@ -305,6 +387,28 @@ export default function CleanQuoteApp() {
   const toggleChemical = (id: string) =>
     setSelectedChemicals((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
 
+  // Pisos adicionales: el piso principal (el del selector) ocupa el área que queda libre
+  const usedFloors = [form.floorMaterial, ...extraFloors.map((f) => f.floorMaterial)];
+  const extrasTotal = extraFloors.reduce((a, f) => a + (Number(f.areaM2) || 0), 0);
+  const primaryFloorArea = (Number(areaM2) || 0) - extrasTotal;
+  const floorError =
+    extraFloors.length === 0
+      ? null
+      : extraFloors.some((f) => !(Number(f.areaM2) > 0))
+      ? "Indica los m² de cada tipo de piso adicional."
+      : primaryFloorArea <= 0
+      ? "Los m² de los pisos adicionales deben ser menores al área total."
+      : null;
+
+  const addExtraFloor = () => {
+    const next = FLOOR_OPTIONS.find((o) => !usedFloors.includes(o.value));
+    if (!next) return;
+    setExtraFloors((prev) => [...prev, { floorMaterial: next.value, areaM2: "" }]);
+  };
+  const updateExtraFloor = (idx: number, patch: Partial<{ floorMaterial: string; areaM2: number | "" }>) =>
+    setExtraFloors((prev) => prev.map((f, i) => (i === idx ? { ...f, ...patch } : f)));
+  const removeExtraFloor = (idx: number) => setExtraFloors((prev) => prev.filter((_, i) => i !== idx));
+
   // Sugerencia de químico: por ahora NO se guarda en ningún lugar (solo confirma al usuario).
   // Más adelante aquí se puede hacer un fetch("/api/suggestions", ...) para almacenarla.
   const submitSuggestion = () => {
@@ -318,6 +422,7 @@ export default function CleanQuoteApp() {
     setImagePreview(null); setTranscript(""); setApplyMsg(null); setQuoteResult(null);
     setShowManualForm(false); setShowAdvanced(false);
     setNeedsChemical(false); setSelectedChemicals([]);
+    setExtraFloors([]); setImagePreviews([]);
     setShowSuggestion(false); setSuggestionText(""); setSuggestionSent(false);
     setForm({
       facilityType: "OFFICE", floorMaterial: "TILE", riskLevel: "LOW",
@@ -385,8 +490,8 @@ export default function CleanQuoteApp() {
                   
                   <label className="bg-stone-900 hover:bg-stone-800 text-white px-6 py-3 rounded-xl cursor-pointer flex items-center justify-center gap-2 transition text-sm font-bold w-full max-w-xs shadow-md">
                     {isAnalyzing ? <Loader2 className="w-4 h-4 animate-spin" /> : <UploadCloud className="w-4 h-4" />}
-                    {isAnalyzing ? "Procesando..." : "Subir Foto del Lugar"}
-                    <input type="file" accept="image/*" onChange={handleImageUpload} className="hidden" disabled={isAnalyzing} />
+                    {isAnalyzing ? "Procesando..." : "Subir Fotos del Lugar (hasta 4)"}
+                    <input type="file" accept="image/*" multiple onChange={handleImageUpload} className="hidden" disabled={isAnalyzing} />
                   </label>
                 </div>
 
@@ -409,14 +514,21 @@ export default function CleanQuoteApp() {
 
                 {imagePreview && (
                   <div className="bg-white border border-stone-200 p-4 rounded-2xl flex items-center gap-4 shadow-sm">
-                    <div className="w-16 h-16 rounded-xl overflow-hidden shrink-0 border border-stone-200">
-                      <img src={imagePreview} alt="Analizada" className="w-full h-full object-cover" />
+                    <div className="flex gap-2 shrink-0">
+                      {(imagePreviews.length > 0 ? imagePreviews : [imagePreview]).map((src, i) => (
+                        <div key={i} className="w-16 h-16 rounded-xl overflow-hidden border border-stone-200">
+                          <img src={src} alt={`Analizada ${i + 1}`} className="w-full h-full object-cover" />
+                        </div>
+                      ))}
                     </div>
                     <div className="flex-1">
                       <div className="flex justify-between items-start">
                         <div>
                           <h3 className="font-bold text-stone-900 text-sm flex items-center gap-2"><CheckCircle className="w-4 h-4 text-emerald-500" /> IA Completada</h3>
-                          <p className="text-xs text-stone-500 mt-0.5">Tipología y riesgo pre-cargados. Ingresa el área para continuar.</p>
+                          <p className="text-xs text-stone-500 mt-0.5">
+                            {imagePreviews.length > 1 ? `${imagePreviews.length} fotos analizadas. ` : ""}
+                            {extraFloors.length > 0 ? "Se detectó más de un tipo de piso: indica los m² de cada uno." : "Tipología y riesgo pre-cargados. Ingresa el área para continuar."}
+                          </p>
                         </div>
                       </div>
                     </div>
@@ -505,6 +617,78 @@ export default function CleanQuoteApp() {
                           <option value="MONTHLY_DAILY">Diario L-V (Mensual Recurrente)</option>
                         </select>
                       </div>
+                    </div>
+
+                    {/* Pisos adicionales (pisos mixtos) */}
+                    <div>
+                      {extraFloors.length === 0 ? (
+                        <button type="button" onClick={addExtraFloor} className="text-xs font-semibold text-[#C25E17] hover:underline">
+                          + ¿Hay más de un tipo de piso? Agregar otro
+                        </button>
+                      ) : (
+                        <div className="p-4 bg-stone-50 border border-stone-200 rounded-xl space-y-3">
+                          <div className="flex justify-between items-center">
+                            <span className="text-xs font-bold text-stone-700">Pisos de la instalación</span>
+                            <span className="text-[11px] text-stone-400">Área total: {Number(areaM2) || 0} m²</span>
+                          </div>
+
+                          <div className="flex items-center gap-3 text-xs">
+                            <span className="flex-1 font-semibold text-stone-700">
+                              {FLOOR_LABELS[form.floorMaterial] ?? form.floorMaterial}{" "}
+                              <span className="text-stone-400 font-normal">(principal, el resto del área)</span>
+                            </span>
+                            <span className="w-24 text-right font-mono text-stone-500">
+                              {primaryFloorArea > 0 ? Number(primaryFloorArea.toFixed(1)) : 0} m²
+                            </span>
+                            <span className="w-6" />
+                          </div>
+
+                          {extraFloors.map((f, idx) => (
+                            <div key={idx} className="flex items-center gap-3">
+                              <select
+                                value={f.floorMaterial}
+                                onChange={(e) => updateExtraFloor(idx, { floorMaterial: e.target.value })}
+                                className="flex-1 border border-stone-200 rounded-md p-2 text-xs bg-white outline-none"
+                              >
+                                {FLOOR_OPTIONS.filter((o) => o.value === f.floorMaterial || !usedFloors.includes(o.value)).map((o) => (
+                                  <option key={o.value} value={o.value}>{o.label}</option>
+                                ))}
+                              </select>
+                              <input
+                                type="number"
+                                value={f.areaM2}
+                                placeholder="m²"
+                                onChange={(e) => updateExtraFloor(idx, { areaM2: e.target.value ? Number(e.target.value) : "" })}
+                                className="w-24 border border-stone-200 rounded-md p-2 text-xs outline-none"
+                              />
+                              <button
+                                type="button"
+                                onClick={() => removeExtraFloor(idx)}
+                                aria-label="Quitar piso"
+                                className="w-6 text-stone-400 hover:text-red-500 text-sm"
+                              >
+                                ✕
+                              </button>
+                            </div>
+                          ))}
+
+                          <div className="flex justify-between items-center pt-1">
+                            <button
+                              type="button"
+                              onClick={addExtraFloor}
+                              disabled={usedFloors.length >= FLOOR_OPTIONS.length}
+                              className="text-xs font-semibold text-[#C25E17] hover:underline disabled:opacity-40 disabled:no-underline"
+                            >
+                              + Agregar otro tipo de piso
+                            </button>
+                            <button type="button" onClick={() => setExtraFloors([])} className="text-xs font-semibold text-stone-400 hover:text-stone-600">
+                              Quitar pisos adicionales
+                            </button>
+                          </div>
+
+                          {floorError && <p className="text-[11px] font-medium text-red-600">{floorError}</p>}
+                        </div>
+                      )}
                     </div>
 
                     {/* Químico especial */}
@@ -682,7 +866,7 @@ export default function CleanQuoteApp() {
                   </div>
                 </div>
 
-                <button onClick={() => setShowConfirmModal(true)} disabled={isGenerating} className="w-full bg-[#C25E17] hover:bg-[#a64f12] text-white font-bold py-4 rounded-xl flex justify-center items-center gap-2 shadow-lg shadow-orange-900/10 text-base transition disabled:opacity-70">
+                <button onClick={() => setShowConfirmModal(true)} disabled={isGenerating || !!floorError} className="w-full bg-[#C25E17] hover:bg-[#a64f12] text-white font-bold py-4 rounded-xl flex justify-center items-center gap-2 shadow-lg shadow-orange-900/10 text-base transition disabled:opacity-70">
                   {isGenerating ? <Loader2 className="w-5 h-5 animate-spin"/> : <Calculator className="w-5 h-5"/>}
                   {isGenerating ? "Procesando..." : "Calcular Cotización Exacta"}
                 </button>

@@ -25,6 +25,19 @@ export async function POST(request: Request) {
       isNightShift: body.isNightShift || false,
     };
 
+    // 1b. PISOS MIXTOS (opcional): solo se usan si llegan 2+ zonas válidas
+    const VALID_FLOORS = ['TILE', 'VINYL', 'CARPET', 'MARBLE'];
+    const floorZones: { floorMaterial: any; areaM2: number }[] = Array.isArray(body.floorZones)
+      ? body.floorZones
+          .map((z: any) => ({ floorMaterial: z?.floorMaterial, areaM2: Number(z?.areaM2) }))
+          .filter((z: any) => VALID_FLOORS.includes(z.floorMaterial) && Number.isFinite(z.areaM2) && z.areaM2 > 0)
+      : [];
+    if (floorZones.length >= 2) {
+      safeInput.floorZones = floorZones;
+      // El piso que se guarda en la BD (Quote.floorMaterial) es el de mayor área
+      safeInput.floorMaterial = [...floorZones].sort((a, b) => b.areaM2 - a.areaM2)[0].floorMaterial;
+    }
+
     // 2. Usamos el motor matemático
     const baseResult = calculateCleanQuote(safeInput);
 
