@@ -446,7 +446,7 @@ export default function CleanQuoteApp() {
                 <Calculator className="w-5 h-5 text-white" />
               </div>
               <h1 className="text-xl font-bold text-stone-900 tracking-tight flex items-center gap-2">
-                CleanQuote <span className="bg-orange-100 text-[#C25E17] text-[10px] font-bold px-2 py-0.5 rounded uppercase tracking-wider">PRO AI</span>
+                CleanxCost Studio <span className="bg-orange-100 text-[#C25E17] text-[10px] font-bold px-2 py-0.5 rounded uppercase tracking-wider">PRO AI</span>
               </h1>
             </div>
             <div className="hidden md:flex items-center gap-4 text-xs font-medium text-stone-500">
@@ -472,7 +472,7 @@ export default function CleanQuoteApp() {
                       <Sparkles className="w-5 h-5" />
                     </div>
                     <div>
-                      <h3 className="font-bold text-stone-900 text-sm">CleanQuote AI Vision</h3>
+                      <h3 className="font-bold text-stone-900 text-sm">CleanxCost Studio AI Vision</h3>
                       <p className="text-xs text-stone-500">Estimación fotométrica automática</p>
                     </div>
                   </div>
@@ -969,7 +969,7 @@ export default function CleanQuoteApp() {
 
           {/* FOOTER APLICACIÓN */}
           <div className="max-w-6xl mx-auto mt-12 pt-6 border-t border-stone-200 flex flex-col sm:flex-row justify-between items-center text-[10px] text-stone-400 font-medium">
-            <p>© 2026 CleanQuote Pro B2B. Módulo de cálculo volumétrico y bioseguridad.</p>
+            <p>© 2026 CleanxCost Studio Pro B2B. Módulo de cálculo volumétrico y bioseguridad.</p>
             <div className="flex gap-4 mt-2 sm:mt-0">
               <a href="#" className="hover:text-stone-600">Algoritmo de Rendimientos</a> • 
               <a href="#" className="hover:text-stone-600">Tablas Salariales</a> • 
@@ -993,7 +993,7 @@ export default function CleanQuoteApp() {
             <div className="grid grid-cols-2 gap-8 mb-8 text-sm">
               <div className="p-4 border border-stone-300 rounded">
                 <h3 className="font-bold mb-2 underline">EMPRESA PRESTADORA</h3>
-                <p><strong>Razón social:</strong> CleanQuote S.A.</p>
+                <p><strong>Razón social:</strong> CleanxCost Studio S.A.</p>
                 <p><strong>RUC/ID:</strong> 1790000000001</p>
                 <p><strong>Representante:</strong> [Su Nombre]</p>
                 <p><strong>Domicilio:</strong> Quito</p>
@@ -1084,7 +1084,7 @@ export default function CleanQuoteApp() {
                 )}
                 <li><strong>Equipos y herramientas:</strong> Los aporta la empresa (Depreciación incluida).</li>
                 <li><strong>Forma de pago:</strong> Transferencia bancaria o efectivo contra entrega de factura.</li>
-                <li><strong>Observaciones:</strong> Cotización calculada mediante inteligencia artificial CleanQuote.</li>
+                <li><strong>Observaciones:</strong> Cotización calculada mediante inteligencia artificial CleanxCost Studio.</li>
               </ul>
             </div>
 

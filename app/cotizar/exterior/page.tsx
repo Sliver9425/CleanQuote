@@ -343,7 +343,7 @@ export default function ExteriorQuoteApp() {
                 <Trees className="w-5 h-5 text-white" />
               </div>
               <h1 className="text-xl font-bold text-stone-900 tracking-tight flex items-center gap-2">
-                CleanQuote <span className="bg-emerald-100 text-emerald-700 text-[10px] font-bold px-2 py-0.5 rounded uppercase tracking-wider">Exterior</span>
+                CleanxCost Studio <span className="bg-emerald-100 text-emerald-700 text-[10px] font-bold px-2 py-0.5 rounded uppercase tracking-wider">Exterior</span>
               </h1>
             </div>
             <div className="hidden md:flex items-center gap-4 text-xs font-medium text-stone-500">
@@ -368,7 +368,7 @@ export default function ExteriorQuoteApp() {
                       <Sparkles className="w-5 h-5" />
                     </div>
                     <div>
-                      <h3 className="font-bold text-stone-900 text-sm">CleanQuote AI Vision</h3>
+                      <h3 className="font-bold text-stone-900 text-sm">CleanxCost Studio AI Vision</h3>
                       <p className="text-xs text-stone-500">Análisis de terreno por imagen</p>
                     </div>
                   </div>
@@ -696,7 +696,7 @@ export default function ExteriorQuoteApp() {
           )}
 
           <div className="max-w-6xl mx-auto mt-12 pt-6 border-t border-stone-200 flex flex-col sm:flex-row justify-between items-center text-[10px] text-stone-400 font-medium">
-            <p>© 2026 CleanQuote Pro B2B. Módulo exterior: desbroce, barrido y escombros.</p>
+            <p>© 2026 CleanxCost Studio B2B. Módulo exterior: desbroce, barrido y escombros.</p>
             <div className="flex gap-4 mt-2 sm:mt-0">
               <a href="#" className="hover:text-stone-600">Tarifas Exterior</a> •
               <a href="#" className="hover:text-stone-600">Tasa Escombrera</a> •
@@ -717,7 +717,7 @@ export default function ExteriorQuoteApp() {
             <div className="grid grid-cols-2 gap-8 mb-8 text-sm">
               <div className="p-4 border border-stone-300 rounded">
                 <h3 className="font-bold mb-2 underline">EMPRESA PRESTADORA</h3>
-                <p><strong>Razón social:</strong> CleanQuote S.A.</p>
+                <p><strong>Razón social:</strong> CleanxCost Studio S.A.</p>
                 <p><strong>RUC/ID:</strong> 1790000000001</p>
                 <p><strong>Representante:</strong> [Su Nombre]</p>
                 <p><strong>Domicilio:</strong> Quito, Ecuador</p>
@@ -805,7 +805,7 @@ export default function ExteriorQuoteApp() {
                 <li><strong>Maquinaria:</strong> Aportada por la empresa (incluye operador).</li>
                 <li><strong>Desalojo:</strong> A escombreras autorizadas por el GAD correspondiente.</li>
                 <li><strong>Forma de pago:</strong> Transferencia bancaria contra entrega de factura.</li>
-                <li><strong>Observaciones:</strong> Cotización calculada con CleanQuote PRO Exterior.</li>
+                <li><strong>Observaciones:</strong> Cotización calculada con CleanxCost Studio PRO Exterior.</li>
               </ul>
             </div>
 

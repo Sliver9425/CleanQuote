@@ -12,7 +12,7 @@ export default function HomePage() {
             <Calculator className="w-5 h-5 text-white" />
           </div>
           <h1 className="text-xl font-bold text-stone-900 tracking-tight flex items-center gap-2">
-            CleanQuote
+            CleanxCost Studio
             <span className="bg-orange-100 text-[#C25E17] text-[10px] font-bold px-2 py-0.5 rounded uppercase tracking-wider">
               PRO AI
             </span>
@@ -32,7 +32,7 @@ export default function HomePage() {
             <span className="text-[#C25E17]">en segundos, no en horas.</span>
           </h1>
           <p className="text-stone-500 max-w-2xl mx-auto text-lg">
-            CleanQuote PRO usa visión artificial y procesamiento de lenguaje natural para
+            CleanxCost Studio usa visión artificial y procesamiento de lenguaje natural para
             estimar áreas, detectar condiciones del sitio y generar propuestas comerciales
             con desglose técnico y contrato listo para imprimir.
           </p>
@@ -89,7 +89,7 @@ export default function HomePage() {
 
         {/* FOOTER */}
         <p className="text-center text-xs text-stone-400 mt-16">
-          © 2026 CleanQuote Pro B2B · Módulo de cálculo volumétrico y bioseguridad
+          © 2026 CleanxCost Studio Pro B2B · Módulo de cálculo volumétrico y bioseguridad
         </p>
       </main>
     </div>
