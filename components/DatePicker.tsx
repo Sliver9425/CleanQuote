@@ -38,6 +38,13 @@ export function DatePicker({
   const [isOpen, setIsOpen] = React.useState(false);
   const cls = ACCENT_CLASSES[accent];
 
+  // react-day-picker v9: ya no existe "fromDate". Las fechas pasadas se bloquean con "disabled",
+  // sumándolo al bloqueo que pueda llegar desde afuera (por ejemplo, el fin no puede ser antes del inicio).
+  const disabledMatchers: Matcher[] = [
+    { before: new Date() },
+    ...(Array.isArray(disabled) ? disabled : disabled ? [disabled] : []),
+  ];
+
   return (
     <div className="relative">
       <button
@@ -59,8 +66,8 @@ export function DatePicker({
               setIsOpen(false);
             }}
             locale={es}
-            fromDate={new Date()}
-            disabled={disabled} // ← NUEVO v2
+            startMonth={new Date()}
+            disabled={disabledMatchers}
           />
         </div>
       )}
